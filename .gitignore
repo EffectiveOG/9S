@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+venv/
+.env
+
+# Data
+data/models/*
+data/known_faces/*
+data/logs/*
+*.db
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
