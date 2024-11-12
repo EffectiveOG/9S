@@ -155,13 +155,13 @@ setup_python_environment() {
     print_status "Setting up Python environment..."
     
     # Check if Python 3.10 is installed
-    if ! command -v python3.10 &> /dev/null; then
+    if ! command -v python3.11 &> /dev/null; then
         print_status "Installing Python 3.10..."
-        brew install python@3.10
+        brew install python@3.11
     fi
     
     # Create virtual environment
-    python3.10 -m venv venv
+    python3.11 -m venv venv
     source venv/bin/activate
     
     # Upgrade pip
