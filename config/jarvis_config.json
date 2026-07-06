@@ -1,0 +1,271 @@
+{
+    "web": {
+        "host": "0.0.0.0",
+        "port": 8000,
+        "ssl": {
+            "enabled": false,
+            "cert_file": "config/ssl/cert.pem",
+            "key_file": "config/ssl/key.pem"
+        },
+        "auth": {
+            "enabled": true,
+            "token_expiry_hours": 24,
+            "allowed_ips": ["192.168.1.0/24"]
+        },
+        "cors": {
+            "enabled": true,
+            "allowed_origins": ["http://jarvis.local:3000"]
+        }
+    },
+    "vision": {
+        "camera_index": 0,
+        "frame_size": [1280, 720],
+        "show_preview": true,
+        "yolo_model": "yolov8n.pt",
+        "device": "mps",
+        "flip_horizontal": true,    
+        "flip_vertical": false,     
+        "rotation": 0,           
+        "preview_scale": 1.0,    
+        "frame_skip": 2,
+        "detect_objects": true,
+        "detect_faces": true,
+        "detect_gestures": true,
+        "object_confidence": 0.25,
+        "iou_threshold": 0.45,
+        "performance": {
+            "max_fps": 30,
+            "power_mode": "balanced",
+            "batch_size": 1
+        },
+        "backup": {
+            "enabled": true,
+            "interval_hours": 24,
+            "max_backups": 7,
+            "path": "data/backups/vision"
+        }
+    },
+    "audio": {
+        "sample_rate": 16000,
+        "whisper_model": "base",
+        "device": "cpu",
+        "vad": {
+            "enabled": true,
+            "threshold": 0.3,
+            "min_duration": 0.5,
+            "max_duration": 10.0
+        },
+        "tts": {
+            "voice": "en-US-Neural2-F",
+            "rate": 1.0,
+            "pitch": 1.0
+        },
+        "noise_reduction": {
+            "enabled": true,
+            "method": "spectral",
+            "strength": 0.5
+        },
+        "wake_word": {
+            "enabled": true,
+            "phrase": "hey jarvis",
+            "sensitivity": 0.8
+        }
+    },
+    "memory": {
+        "db_path": "data/jarvis.db",
+        "retention_days": 30,
+        "backup": {
+            "enabled": true,
+            "interval_hours": 24,
+            "max_backups": 7
+        },
+        "compression": {
+            "enabled": true,
+            "method": "lz4"
+        },
+        "cache": {
+            "enabled": true,
+            "max_size_mb": 512,
+            "ttl_minutes": 60
+        }
+    },
+    "automation": {
+        "scenes_file": "config/scenes.json",
+        "default_timeout": 30,
+        "retry_attempts": 3,
+        "retry_delay": 1.0,
+        "watchdog": {
+            "enabled": true,
+            "interval_seconds": 60,
+            "max_failures": 3
+        },
+        "devices": [
+            {
+                "type": "tv",
+                "id": "living_room_tv",
+                "ip_address": "192.168.1.100",
+                "mac_address": "XX:XX:XX:XX:XX:XX",  
+                "hdmi_mapping": {
+                    "ps5": 1,
+                    "xbox": 2,
+                    "tv": 3
+                },
+                "features": {
+                    "hdmi_cec": true,
+                    "wake_on_lan": true,
+                    "auto_power_off": true
+                },
+                "power_management": {
+                    "startup_delay": 5,
+                    "shutdown_delay": 3,
+                    "eco_mode_hours": ["23:00-06:00"]
+                }
+            },
+            {
+                "type": "light",
+                "id": "living_room_lights",
+                "bridge_ip": "192.168.1.200",
+                "api_key": "your_hue_api_key",
+                "backup_api_key": "your_backup_api_key",
+                "scenes": {
+                    "gaming": {
+                        "brightness": 70,
+                        "color_temp": 4000,
+                        "dynamic": true
+                    },
+                    "gaming_intense": {
+                        "brightness": 30,
+                        "color_temp": 2700,
+                        "dynamic": true
+                    }
+                },
+                "auto_brightness": {
+                    "enabled": true,
+                    "min": 10,
+                    "max": 100
+                }
+            },
+            {
+                "type": "game_console",
+                "id": "ps5_console",
+                "console_type": "ps5",
+                "ip_address": "192.168.1.150",
+                "mac_address": "XX:XX:XX:XX:XX:XX",
+                "hdmi_port": 1,
+                "auto_retry": true,
+                "discovery_timeout": 5.0,
+                "power_management": {
+                    "auto_standby_minutes": 30,
+                    "keep_alive": true
+                },
+                "credentials": {
+                    "psn_id": "your_psn_id",
+                    "access_token": "your_access_token",
+                    "refresh_token": "your_refresh_token",
+                    "token_expiry": "2024-12-31T23:59:59Z"
+                },
+                "favorite_games": [
+                    {
+                        "name": "God of War Ragnarök",
+                        "id": "PPSA01412_00",
+                        "quick_scene": "gaming_intense",
+                        "auto_hdr": true,
+                        "game_presets": {
+                            "performance_mode": true,
+                            "low_latency": true
+                        }
+                    },
+                    {
+                        "name": "Spider-Man 2",
+                        "id": "PPSA01411_00",
+                        "quick_scene": "gaming_standard",
+                        "auto_hdr": true,
+                        "game_presets": {
+                            "ray_tracing": true,
+                            "performance_mode": false
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "game_console",
+                "id": "xbox_console",
+                "console_type": "xbox",
+                "ip_address": "192.168.1.151",
+                "mac_address": "YY:YY:YY:YY:YY:YY",
+                "hdmi_port": 2,
+                "auto_retry": true,
+                "discovery_timeout": 5.0,
+                "power_management": {
+                    "auto_standby_minutes": 30,
+                    "keep_alive": true
+                },
+                "credentials": {
+                    "xbox_live_token": "your_xbox_token",
+                    "refresh_token": "your_refresh_token",
+                    "token_expiry": "2024-12-31T23:59:59Z"
+                },
+                "favorite_games": [
+                    {
+                        "name": "Halo Infinite",
+                        "id": "1240440027",
+                        "quick_scene": "gaming_intense",
+                        "game_presets": {
+                            "performance_mode": true,
+                            "low_latency": true
+                        }
+                    },
+                    {
+                        "name": "Forza Horizon 5",
+                        "id": "1240440025",
+                        "quick_scene": "gaming_standard",
+                        "game_presets": {
+                            "quality_mode": true,
+                            "ray_tracing": true
+                        }
+                    }
+                ]
+            }
+        ],
+        "error_handling": {
+            "auto_retry": true,
+            "max_retries": 3,
+            "retry_delay": 1.0,
+            "fallback_scenes": {
+                "gaming_intense": "gaming_standard",
+                "gaming_standard": "default"
+            }
+        },
+        "notifications": {
+            "enabled": true,
+            "methods": ["console", "system"],
+            "levels": ["error", "warning", "info"]
+        }
+    },
+    "system": {
+        "logging": {
+            "level": "INFO",
+            "file": "data/logs/jarvis.log",
+            "max_size_mb": 100,
+            "backup_count": 5,
+            "console_output": true
+        },
+        "performance": {
+            "cpu_limit": 80,
+            "memory_limit_mb": 2048,
+            "gpu_memory_limit_mb": 1024
+        },
+        "maintenance": {
+            "auto_update": {
+                "enabled": true,
+                "check_interval_hours": 24,
+                "time_window": "03:00-05:00"
+            },
+            "cleanup": {
+                "enabled": true,
+                "interval_days": 7,
+                "min_free_space_gb": 10
+            }
+        }
+    }
+}

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jarvis Control Interface</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8">
+        <header class="mb-8">
+            <h1 class="text-4xl font-bold text-gray-800">Jarvis Control Interface</h1>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <!-- System Status -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-4">System Status</h2>
+                <div id="systemStatus" class="space-y-2">
+                    <p>Status: <span id="status" class="font-medium">Loading...</span></p>
+                    <p>Uptime: <span id="uptime" class="font-medium">0s</span></p>
+                </div>
+            </div>
+
+            <!-- Components -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-4">Components</h2>
+                <div id="components" class="space-y-2"></div>
+            </div>
+
+            <!-- Scenes -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-4">Scenes</h2>
+                <div id="scenes" class="space-y-2"></div>
+            </div>
+
+            <!-- Devices -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-4">Devices</h2>
+                <div id="devices" class="space-y-4"></div>
+            </div>
+
+            <!-- Command Console -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-4">Command Console</h2>
+                <div class="space-y-4">
+                    <textarea id="commandInput" class="w-full h-24 p-2 border rounded"></textarea>
+                    <button onclick="sendCommand()" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+                        Send Command
+                    </button>
+                </div>
+            </div>
+
+            <!-- Event Log -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-4">Event Log</h2>
+                <div id="eventLog" class="h-48 overflow-y-auto space-y-2 text-sm"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // WebSocket connection
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        
+        ws.onmessage = function(event) {
+            const state = JSON.parse(event.data);
+            updateDashboard(state);
+        };
+
+        // Update dashboard with new state
+        function updateDashboard(state) {
+            // Update system status
+            document.getElementById('status').textContent = state.system.status;
+            document.getElementById('uptime').textContent = `${Math.floor(state.system.uptime)}s`;
+            
+            // Update components
+            const componentsDiv = document.getElementById('components');
+            componentsDiv.innerHTML = '';
+            Object.entries(state.system.components).forEach(([name, status]) => {
+                const color = status === 'healthy' ? 'text-green-500' : 'text-red-500';
+                componentsDiv.innerHTML += `
+                    <div class="flex justify-between items-center">
+                        <span>${name}</span>
+                        <span class="${color}">${status}</span>
+                    </div>
+                `;
+            });
+            
+            // Update devices
+            const devicesDiv = document.getElementById('devices');
+            devicesDiv.innerHTML = '';
+            Object.entries(state.devices).forEach(([id, deviceState]) => {
+                devicesDiv.innerHTML += `
+                    <div class="border rounded p-3">
+                        <h3 class="font-medium">${id}</h3>
+                        <pre class="text-sm mt-2">${JSON.stringify(deviceState, null, 2)}</pre>
+                    </div>
+                `;
+            });
+            
+            // Add event to log
+            if (state.last_event) {
+                const eventLog = document.getElementById('eventLog');
+                const eventDiv = document.createElement('div');
+                eventDiv.className = 'p-2 bg-gray-50 rounded';
+                eventDiv.textContent = `${state.last_event.type} from ${state.last_event.sender}`;
+                eventLog.prepend(eventDiv);
+                
+                // Limit log size
+                while (eventLog.children.length > 50) {
+                    eventLog.removeChild(eventLog.lastChild);
+                }
+            }
+        }
+
+        // Send command
+        function sendCommand() {
+            const commandInput = document.getElementById('commandInput');
+            try {
+                const command = JSON.parse(commandInput.value);
+                ws.send(JSON.stringify(command));
+                commandInput.value = '';
+            } catch (e) {
+                alert('Invalid command format. Please enter valid JSON.');
+            }
+        }
+
+        // Initial data load
+        fetch('/api/status')
+            .then(response => response.json())
+            .then(data => {
+                const state = {
+                    system: {
+                        status: data.status,
+                        uptime: data.uptime,
+                        components: data.components
+                    },
+                    devices: {},
+                    last_event: data.last_event
+                };
+                updateDashboard(state);
+            });
+
+        // Load scenes
+        fetch('/api/scenes')
+            .then(response => response.json())
+            .then(data => {
+                const scenesDiv = document.getElementById('scenes');
+                data.scenes.forEach(scene => {
+                    const button = document.createElement('button');
+                    button.className = 'bg-gray-200 px-3 py-1 rounded mr-2 mb-2 hover:bg-gray-300';
+                    button.textContent = scene;
+                    button.onclick = () => activateScene(scene);
+                    scenesDiv.appendChild(button);
+                });
+            });
+
+        function activateScene(scene) {
+            fetch(`/api/scenes/${scene}/activate`, { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        console.log(`Scene ${scene} activated`);
+                    }
+                });
+        }
+    </script>
+</body>
+</html>

@@ -17,3 +17,19 @@ data/logs/*
 
 # OS
 .DS_Store
+
+# --- hardened: envs, secrets, weights, backups, build artifacts ---
+.venv/
+*.pt
+backups/
+restore_temp/
+config/ssl/
+config/.secret_key
+*.egg-info/
+jarvis/components/audio/Procedures_Blue_Lease.xlsx
+
+# Office documents / temp lock files (not part of this project)
+*.pptx
+*.docx
+*.xlsx
+~$*

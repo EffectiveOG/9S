@@ -1,0 +1,199 @@
+{
+    "movie_night": {
+        "name": "Movie Night",
+        "devices": {
+            "living_room_tv": [
+                {"type": "power_on"},
+                {"type": "set_input", "value": "hdmi1"}
+            ],
+            "living_room_lights": [
+                {"type": "set_scene", "value": "movie"}
+            ],
+            "living_room_blinds": [
+                {"type": "set_position", "value": 0}
+            ]
+        },
+        "exit_actions": {
+            "living_room_tv": [
+                {"type": "power_off"}
+            ],
+            "living_room_lights": [
+                {"type": "set_scene", "value": "default"}
+            ],
+            "living_room_blinds": [
+                {"type": "set_position", "value": 100}
+            ]
+        }
+    },
+    "morning_routine": {
+        "name": "Morning Routine",
+        "devices": {
+            "bedroom_lights": [
+                {"type": "set_scene", "value": "energizing"}
+            ],
+            "kitchen_lights": [
+                {"type": "power_on"},
+                {"type": "set_brightness", "value": 100}
+            ],
+            "living_room_blinds": [
+                {"type": "set_position", "value": 100}
+            ]
+        },
+        "exit_actions": {
+            "bedroom_lights": [
+                {"type": "power_off"}
+            ],
+            "kitchen_lights": [
+                {"type": "power_off"}
+            ]
+        }
+    },
+    "evening_relaxation": {
+        "name": "Evening Relaxation",
+        "devices": {
+            "living_room_lights": [
+                {"type": "set_scene", "value": "relaxing"}
+            ],
+            "bedroom_lights": [
+                {"type": "set_scene", "value": "relaxing"}
+            ],
+            "living_room_blinds": [
+                {"type": "set_position", "value": 0}
+            ]
+        },
+        "exit_actions": {
+            "living_room_lights": [
+                {"type": "power_off"}
+            ],
+            "bedroom_lights": [
+                {"type": "power_off"}
+            ]
+        }
+    },
+    "gaming_standard": {
+        "name": "Standard Gaming",
+        "description": "Balanced lighting setup for general gaming",
+        "devices": {
+            "living_room_tv": [
+                {"type": "power_on"},
+                {"type": "set_picture_mode", "value": "game"},
+                {"type": "set_game_mode", "value": true}
+            ],
+            "living_room_lights": [
+                {"type": "set_scene", "value": "gaming"},
+                {"type": "set_brightness", "value": 60},
+                {"type": "set_color_temp", "value": 4000}
+            ],
+            "living_room_blinds": [
+                {"type": "set_position", "value": 50}
+            ]
+        },
+        "exit_actions": {
+            "living_room_tv": [
+                {"type": "set_picture_mode", "value": "standard"},
+                {"type": "set_game_mode", "value": false}
+            ],
+            "living_room_lights": [
+                {"type": "set_scene", "value": "default"}
+            ],
+            "living_room_blinds": [
+                {"type": "set_position", "value": 100}
+            ]
+        }
+    },
+    "gaming_intense": {
+        "name": "Intense Gaming",
+        "description": "Immersive setup for action and competitive games",
+        "devices": {
+            "living_room_tv": [
+                {"type": "power_on"},
+                {"type": "set_picture_mode", "value": "game"},
+                {"type": "set_game_mode", "value": true},
+                {"type": "set_low_latency", "value": true}
+            ],
+            "living_room_lights": [
+                {"type": "set_scene", "value": "gaming_intense"},
+                {"type": "set_brightness", "value": 30},
+                {"type": "set_color_temp", "value": 2700}
+            ],
+            "living_room_blinds": [
+                {"type": "set_position", "value": 0}
+            ]
+        },
+        "exit_actions": {
+            "living_room_tv": [
+                {"type": "set_picture_mode", "value": "standard"},
+                {"type": "set_game_mode", "value": false},
+                {"type": "set_low_latency", "value": false}
+            ],
+            "living_room_lights": [
+                {"type": "set_scene", "value": "default"}
+            ],
+            "living_room_blinds": [
+                {"type": "set_position", "value": 100}
+            ]
+        }
+    },
+    "ps5_gaming": {
+        "name": "PS5 Gaming",
+        "description": "Optimized setup for PS5",
+        "devices": {
+            "living_room_tv": [
+                {"type": "power_on"},
+                {"type": "set_input", "value": "hdmi1"},
+                {"type": "set_picture_mode", "value": "game"},
+                {"type": "set_game_mode", "value": true},
+                {"type": "set_low_latency", "value": true}
+            ],
+            "ps5_console": [
+                {"type": "power_on"}
+            ],
+            "living_room_lights": [
+                {"type": "set_scene", "value": "gaming"},
+                {"type": "set_color", "value": [0, 0, 255]}
+            ]
+        },
+        "exit_actions": {
+            "ps5_console": [
+                {"type": "power_off"}
+            ],
+            "living_room_tv": [
+                {"type": "power_off"}
+            ],
+            "living_room_lights": [
+                {"type": "set_scene", "value": "default"}
+            ]
+        }
+    },
+    "xbox_gaming": {
+        "name": "Xbox Gaming",
+        "description": "Optimized setup for Xbox Series X",
+        "devices": {
+            "living_room_tv": [
+                {"type": "power_on"},
+                {"type": "set_input", "value": "hdmi2"},
+                {"type": "set_picture_mode", "value": "game"},
+                {"type": "set_game_mode", "value": true},
+                {"type": "set_low_latency", "value": true}
+            ],
+            "xbox_console": [
+                {"type": "power_on"}
+            ],
+            "living_room_lights": [
+                {"type": "set_scene", "value": "gaming"},
+                {"type": "set_color", "value": [0, 255, 0]}
+            ]
+        },
+        "exit_actions": {
+            "xbox_console": [
+                {"type": "power_off"}
+            ],
+            "living_room_tv": [
+                {"type": "power_off"}
+            ],
+            "living_room_lights": [
+                {"type": "set_scene", "value": "default"}
+            ]
+        }
+    }
+}
