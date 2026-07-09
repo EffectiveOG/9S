@@ -1,6 +1,7 @@
 # jarvis/core/jarvis_core.py
 
 import asyncio
+import os
 from typing import Dict, Any, List, Optional, Set
 from pathlib import Path
 import json
@@ -55,13 +56,26 @@ class JarvisCore:
         try:
             if self.config_path.exists():
                 with open(self.config_path, 'r') as f:
-                    return json.load(f)
+                    return self._expand_env_vars(json.load(f))
             else:
                 logger.warning(f"Config file not found: {self.config_path}")
                 return {}
         except Exception as e:
             logger.error(f"Error loading config: {e}")
             return {}
+
+    @staticmethod
+    def _expand_env_vars(obj):
+        """Recursively expand ${VAR} / $VAR references in config strings from
+        the environment, so secrets (API keys, device tokens) can live in .env
+        instead of being committed in jarvis_config.json."""
+        if isinstance(obj, dict):
+            return {k: JarvisCore._expand_env_vars(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [JarvisCore._expand_env_vars(v) for v in obj]
+        if isinstance(obj, str):
+            return os.path.expandvars(obj)
+        return obj
         
     def register_component(self, name: str, component: BaseComponent):
         """

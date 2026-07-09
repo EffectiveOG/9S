@@ -1,7 +1,19 @@
 # jarvis/web/server.py
 
-from fastapi import FastAPI, WebSocket, HTTPException, Depends, status
+# Load .env before importing modules that read environment variables at import
+# time (e.g. security.py reads JARVIS_SECRET_KEY / JARVIS_ADMIN_PASSWORD).
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+from fastapi import FastAPI, WebSocket, HTTPException, Depends, status, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+import ipaddress
+import json
+import time
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
@@ -79,16 +91,70 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Configure CORS (Adjust allow_origins in production)
+# --- Web/security settings loaded from jarvis_config.json -------------------
+def _load_web_config():
+    try:
+        with open(Path("config/jarvis_config.json")) as f:
+            return (json.load(f) or {}).get("web", {})
+    except Exception:
+        return {}
+
+_web_cfg = _load_web_config()
+
+# Configure CORS from config; fall back to "*" for local development.
+_cors_origins = (_web_cfg.get("cors", {}) or {}).get("allowed_origins") or ["*"]
+# allow_credentials must be False with the "*" wildcard (browsers reject that
+# combo); it is only enabled when explicit origins are configured.
+_cors_credentials = _cors_origins != ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For development only - restrict in production
-    # allow_credentials MUST be False when allow_origins is "*": the browser
-    # rejects that combination, and auth here uses a Bearer header (not cookies).
-    allow_credentials=False,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- Optional IP allowlist (opt-in via web.ip_allowlist_enabled) ------------
+# Disabled by default so it can never lock you out; loopback is always allowed.
+_ip_allowlist_enabled = bool(_web_cfg.get("ip_allowlist_enabled", False))
+_allowed_networks = []
+for _cidr in ((_web_cfg.get("auth", {}) or {}).get("allowed_ips") or []):
+    try:
+        _allowed_networks.append(ipaddress.ip_network(_cidr, strict=False))
+    except ValueError:
+        pass
+
+@app.middleware("http")
+async def ip_allowlist_middleware(request: Request, call_next):
+    if _ip_allowlist_enabled and _allowed_networks:
+        host = request.client.host if request.client else None
+        client_ip = None
+        if host:
+            try:
+                client_ip = ipaddress.ip_address(host)
+            except ValueError:
+                client_ip = None
+        allowed = client_ip is not None and (
+            client_ip.is_loopback or any(client_ip in net for net in _allowed_networks)
+        )
+        if not allowed:
+            return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+    return await call_next(request)
+
+# --- Simple in-memory rate limiter for the login endpoint -------------------
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_WINDOW_SECONDS = 60.0
+_login_attempts = {}
+
+def _login_rate_limited(client_ip: str) -> bool:
+    now = time.time()
+    attempts = _login_attempts.setdefault(client_ip, [])
+    while attempts and now - attempts[0] > _LOGIN_WINDOW_SECONDS:
+        attempts.pop(0)
+    if len(attempts) >= _LOGIN_MAX_ATTEMPTS:
+        return True
+    attempts.append(now)
+    return False
 
 # Global variables
 jarvis: JarvisCore = None
@@ -111,7 +177,7 @@ async def get_dashboard():
     return "<h1>Welcome to Jarvis</h1>"
 
 @app.get("/api/status")
-async def get_status():
+async def get_status(current_user: Dict = Depends(security.get_current_user)):
     """Get current system status."""
     if not jarvis:
         raise HTTPException(status_code=503, detail="Jarvis not initialized")
@@ -123,7 +189,7 @@ async def get_status():
     }
 
 @app.get("/api/components")
-async def get_components():
+async def get_components(current_user: Dict = Depends(security.get_current_user)):
     """Get status of all components."""
     if not jarvis:
         raise HTTPException(status_code=503, detail="Jarvis not initialized")
@@ -136,7 +202,8 @@ async def get_components():
     }
 
 @app.post("/api/command")
-async def send_command(command: Dict[str, Any]):
+async def send_command(command: Dict[str, Any],
+                       current_user: Dict = Depends(security.get_current_user)):
     """Send command to Jarvis."""
     if not jarvis:
         raise HTTPException(status_code=503, detail="Jarvis not initialized")
@@ -144,7 +211,7 @@ async def send_command(command: Dict[str, Any]):
     return {"status": "success", "message": "Command sent"}
 
 @app.get("/api/scenes")
-async def get_scenes():
+async def get_scenes(current_user: Dict = Depends(security.get_current_user)):
     """Get available scenes."""
     if not jarvis or "automation" not in jarvis.components:
         raise HTTPException(status_code=503, detail="Automation not available")
@@ -155,7 +222,8 @@ async def get_scenes():
     }
 
 @app.post("/api/scenes/{scene_name}/activate")
-async def activate_scene(scene_name: str):
+async def activate_scene(scene_name: str,
+                         current_user: Dict = Depends(security.get_current_user)):
     """Activate a scene."""
     if not jarvis or "automation" not in jarvis.components:
         raise HTTPException(status_code=503, detail="Automation not available")
@@ -164,13 +232,13 @@ async def activate_scene(scene_name: str):
     return {"status": "success" if success else "failed"}
 
 @app.get("/api/devices")
-async def get_devices():
+async def get_devices(current_user: Dict = Depends(security.get_current_user)):
     """Get status of all devices."""
     if not jarvis or "automation" not in jarvis.components:
         raise HTTPException(status_code=503, detail="Automation not available")
     automation = jarvis.components["automation"]
     return {
-        device_id: controller.get_state()
+        device_id: await controller.get_state()
         for device_id, controller in automation.controllers.items()
     }
 
@@ -197,8 +265,14 @@ async def broadcast_state():
 
 # Authentication endpoint
 @app.post("/token")
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
     """Handle user login."""
+    client_ip = request.client.host if request.client else "unknown"
+    if _login_rate_limited(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts, please try again later",
+        )
     user = security.authenticate_user(form_data.username, form_data.password)
     if not user:
         raise HTTPException(

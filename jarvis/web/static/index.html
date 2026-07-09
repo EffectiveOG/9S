@@ -8,13 +8,31 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="bg-gray-100">
-    <div class="container mx-auto px-4 py-8">
-        <header class="mb-8">
+    <!-- Login gate -->
+    <div id="loginOverlay" class="fixed inset-0 bg-gray-800 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-lg p-8 w-80">
+            <h1 class="text-2xl font-bold mb-6 text-gray-800">Jarvis Login</h1>
+            <div class="space-y-3">
+                <input id="username" type="text" placeholder="Username" autocomplete="username"
+                       class="w-full p-2 border rounded" value="admin">
+                <input id="password" type="password" placeholder="Password" autocomplete="current-password"
+                       class="w-full p-2 border rounded">
+                <p id="loginError" class="text-red-500 text-sm hidden">Invalid username or password</p>
+                <button onclick="login()"
+                        class="w-full bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+                    Sign in
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="app" class="container mx-auto px-4 py-8 hidden">
+        <header class="mb-8 flex justify-between items-center">
             <h1 class="text-4xl font-bold text-gray-800">Jarvis Control Interface</h1>
+            <button onclick="logout()" class="text-sm text-gray-500 hover:text-gray-800">Sign out</button>
         </header>
 
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <!-- System Status -->
             <div class="bg-white rounded-lg shadow p-6">
                 <h2 class="text-xl font-semibold mb-4">System Status</h2>
                 <div id="systemStatus" class="space-y-2">
@@ -23,36 +41,33 @@
                 </div>
             </div>
 
-            <!-- Components -->
             <div class="bg-white rounded-lg shadow p-6">
                 <h2 class="text-xl font-semibold mb-4">Components</h2>
                 <div id="components" class="space-y-2"></div>
             </div>
 
-            <!-- Scenes -->
             <div class="bg-white rounded-lg shadow p-6">
                 <h2 class="text-xl font-semibold mb-4">Scenes</h2>
                 <div id="scenes" class="space-y-2"></div>
             </div>
 
-            <!-- Devices -->
             <div class="bg-white rounded-lg shadow p-6">
                 <h2 class="text-xl font-semibold mb-4">Devices</h2>
                 <div id="devices" class="space-y-4"></div>
             </div>
 
-            <!-- Command Console -->
             <div class="bg-white rounded-lg shadow p-6">
                 <h2 class="text-xl font-semibold mb-4">Command Console</h2>
                 <div class="space-y-4">
-                    <textarea id="commandInput" class="w-full h-24 p-2 border rounded"></textarea>
-                    <button onclick="sendCommand()" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+                    <textarea id="commandInput" class="w-full h-24 p-2 border rounded"
+                              placeholder='{"type": "system_control", "data": {"action": "status"}}'></textarea>
+                    <button onclick="sendCommand()"
+                            class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
                         Send Command
                     </button>
                 </div>
             </div>
 
-            <!-- Event Log -->
             <div class="bg-white rounded-lg shadow p-6">
                 <h2 class="text-xl font-semibold mb-4">Event Log</h2>
                 <div id="eventLog" class="h-48 overflow-y-auto space-y-2 text-sm"></div>
@@ -61,111 +76,155 @@
     </div>
 
     <script>
-        // WebSocket connection
-        const ws = new WebSocket(`ws://${window.location.host}/ws`);
-        
-        ws.onmessage = function(event) {
-            const state = JSON.parse(event.data);
-            updateDashboard(state);
-        };
+        // ------------------------------------------------------------------
+        // Auth state (in-memory only; token is never persisted to storage)
+        // ------------------------------------------------------------------
+        let authToken = null;
+        let ws = null;
 
-        // Update dashboard with new state
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const errEl = document.getElementById('loginError');
+            errEl.classList.add('hidden');
+            try {
+                const res = await fetch('/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ username, password })
+                });
+                if (!res.ok) { errEl.classList.remove('hidden'); return; }
+                const data = await res.json();
+                authToken = data.access_token;
+                document.getElementById('loginOverlay').classList.add('hidden');
+                document.getElementById('app').classList.remove('hidden');
+                start();
+            } catch (e) {
+                errEl.classList.remove('hidden');
+            }
+        }
+
+        function logout() {
+            authToken = null;
+            if (ws) { ws.close(); ws = null; }
+            document.getElementById('app').classList.add('hidden');
+            document.getElementById('loginOverlay').classList.remove('hidden');
+        }
+
+        // Fetch wrapper that attaches the bearer token and handles expiry.
+        async function authFetch(url, opts = {}) {
+            opts.headers = Object.assign({}, opts.headers, {
+                'Authorization': 'Bearer ' + authToken
+            });
+            const res = await fetch(url, opts);
+            if (res.status === 401) { logout(); throw new Error('Unauthorized'); }
+            return res;
+        }
+
+        function start() {
+            connectWebSocket();
+            loadStatus();
+            loadScenes();
+        }
+
+        function connectWebSocket() {
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            ws = new WebSocket(`${proto}://${location.host}/ws`);
+            // The server expects the token as the first message.
+            ws.onopen = () => ws.send(JSON.stringify({ token: authToken }));
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                if (msg && msg.system) updateDashboard(msg);   // state broadcast
+                // (metrics/command_response messages are ignored here)
+            };
+            ws.onclose = () => { /* connection closed */ };
+        }
+
         function updateDashboard(state) {
-            // Update system status
             document.getElementById('status').textContent = state.system.status;
-            document.getElementById('uptime').textContent = `${Math.floor(state.system.uptime)}s`;
-            
-            // Update components
+            document.getElementById('uptime').textContent =
+                `${Math.floor(state.system.uptime || 0)}s`;
+
             const componentsDiv = document.getElementById('components');
             componentsDiv.innerHTML = '';
-            Object.entries(state.system.components).forEach(([name, status]) => {
+            Object.entries(state.system.components || {}).forEach(([name, status]) => {
                 const color = status === 'healthy' ? 'text-green-500' : 'text-red-500';
-                componentsDiv.innerHTML += `
-                    <div class="flex justify-between items-center">
-                        <span>${name}</span>
-                        <span class="${color}">${status}</span>
-                    </div>
-                `;
+                componentsDiv.innerHTML +=
+                    `<div class="flex justify-between items-center">
+                        <span>${name}</span><span class="${color}">${status}</span></div>`;
             });
-            
-            // Update devices
+
             const devicesDiv = document.getElementById('devices');
             devicesDiv.innerHTML = '';
-            Object.entries(state.devices).forEach(([id, deviceState]) => {
-                devicesDiv.innerHTML += `
-                    <div class="border rounded p-3">
-                        <h3 class="font-medium">${id}</h3>
-                        <pre class="text-sm mt-2">${JSON.stringify(deviceState, null, 2)}</pre>
-                    </div>
-                `;
+            Object.entries(state.devices || {}).forEach(([id, deviceState]) => {
+                devicesDiv.innerHTML +=
+                    `<div class="border rounded p-3"><h3 class="font-medium">${id}</h3>
+                     <pre class="text-sm mt-2">${JSON.stringify(deviceState, null, 2)}</pre></div>`;
             });
-            
-            // Add event to log
-            if (state.last_event) {
+
+            if (state.last_event && state.last_event.type) {
                 const eventLog = document.getElementById('eventLog');
                 const eventDiv = document.createElement('div');
                 eventDiv.className = 'p-2 bg-gray-50 rounded';
                 eventDiv.textContent = `${state.last_event.type} from ${state.last_event.sender}`;
                 eventLog.prepend(eventDiv);
-                
-                // Limit log size
-                while (eventLog.children.length > 50) {
-                    eventLog.removeChild(eventLog.lastChild);
-                }
+                while (eventLog.children.length > 50) eventLog.removeChild(eventLog.lastChild);
             }
         }
 
-        // Send command
         function sendCommand() {
             const commandInput = document.getElementById('commandInput');
             try {
                 const command = JSON.parse(commandInput.value);
-                ws.send(JSON.stringify(command));
+                // Server expects a typed envelope over the WebSocket.
+                ws.send(JSON.stringify({ type: 'command', data: command }));
                 commandInput.value = '';
             } catch (e) {
                 alert('Invalid command format. Please enter valid JSON.');
             }
         }
 
-        // Initial data load
-        fetch('/api/status')
-            .then(response => response.json())
-            .then(data => {
-                const state = {
-                    system: {
-                        status: data.status,
-                        uptime: data.uptime,
-                        components: data.components
-                    },
-                    devices: {},
-                    last_event: data.last_event
-                };
-                updateDashboard(state);
-            });
+        async function loadStatus() {
+            try {
+                const res = await authFetch('/api/status');
+                const data = await res.json();
+                updateDashboard({
+                    system: { status: data.status, uptime: data.uptime, components: data.components },
+                    devices: {}, last_event: data.last_event
+                });
+            } catch (e) { /* handled by authFetch */ }
+        }
 
-        // Load scenes
-        fetch('/api/scenes')
-            .then(response => response.json())
-            .then(data => {
+        async function loadScenes() {
+            try {
+                const res = await authFetch('/api/scenes');
+                const data = await res.json();
                 const scenesDiv = document.getElementById('scenes');
-                data.scenes.forEach(scene => {
+                scenesDiv.innerHTML = '';
+                (data.scenes || []).forEach(scene => {
                     const button = document.createElement('button');
                     button.className = 'bg-gray-200 px-3 py-1 rounded mr-2 mb-2 hover:bg-gray-300';
                     button.textContent = scene;
                     button.onclick = () => activateScene(scene);
                     scenesDiv.appendChild(button);
                 });
-            });
-
-        function activateScene(scene) {
-            fetch(`/api/scenes/${scene}/activate`, { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        console.log(`Scene ${scene} activated`);
-                    }
-                });
+            } catch (e) { /* handled by authFetch */ }
         }
+
+        async function activateScene(scene) {
+            try {
+                const res = await authFetch(`/api/scenes/${scene}/activate`, { method: 'POST' });
+                const data = await res.json();
+                if (data.status === 'success') console.log(`Scene ${scene} activated`);
+            } catch (e) { /* handled by authFetch */ }
+        }
+
+        // Allow Enter key to submit the login form.
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !document.getElementById('loginOverlay').classList.contains('hidden')) {
+                login();
+            }
+        });
     </script>
 </body>
 </html>
