@@ -1,6 +1,7 @@
 # jarvis/components/vision/processors/object_detector.py
 
 from typing import Dict, List, Optional
+import asyncio
 import numpy as np
 import torch
 from ultralytics import YOLO
@@ -76,43 +77,37 @@ class ObjectDetector:
             }
         """
         try:
-            # Run inference
-            results = self.model(
-                frame,
-                verbose=False,
-                device=self.device,
-                stream=True  # Enable streaming mode for better memory efficiency
-            )
-            
-            # Process results
-            detections = []
-            for result in results:
-                # Get boxes and confidence scores
-                boxes = result.boxes
-                
-                # Process each detection
-                for box in boxes:
-                    detection = {
-                        "class": result.names[int(box.cls[0])],
-                        "confidence": float(box.conf[0]),
-                        "bbox": box.xyxy[0].tolist()  # Convert to [x1, y1, x2, y2] format
-                    }
-                    
-                    # Add segmentation mask if available
-                    if result.masks is not None:
-                        detection["segmentation"] = result.masks[0].data
-                        
-                    # Add tracking ID if tracking is enabled
-                    if hasattr(box, 'id') and box.id is not None:
-                        detection["track_id"] = int(box.id[0])
-                        
-                    detections.append(detection)
-            
+            # Run the blocking inference off the event loop.
+            detections = await asyncio.to_thread(self._detect_sync, frame)
             return {"objects": detections}
-            
+
         except Exception as e:
             logger.error(f"Error during object detection: {e}")
             return {"objects": []}
+
+    def _detect_sync(self, frame: np.ndarray) -> List[Dict]:
+        """Blocking YOLO inference (runs in a worker thread)."""
+        results = self.model(
+            frame,
+            verbose=False,
+            device=self.device,
+            stream=True  # Enable streaming mode for better memory efficiency
+        )
+
+        detections = []
+        for result in results:
+            for box in result.boxes:
+                detection = {
+                    "class": result.names[int(box.cls[0])],
+                    "confidence": float(box.conf[0]),
+                    "bbox": box.xyxy[0].tolist()  # [x1, y1, x2, y2]
+                }
+                if result.masks is not None:
+                    detection["segmentation"] = result.masks[0].data
+                if hasattr(box, 'id') and box.id is not None:
+                    detection["track_id"] = int(box.id[0])
+                detections.append(detection)
+        return detections
 
     async def detect_with_tracking(self, frame: np.ndarray) -> Dict[str, List]:
         """

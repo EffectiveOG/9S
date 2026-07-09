@@ -77,6 +77,12 @@ class TVController(BaseController):
                 return await self._send_command("mute/on")
             elif action == "unmute":
                 return await self._send_command("mute/off")
+            elif action == "set_picture_mode":
+                return await self._send_command(f"picture/mode/{value}")
+            elif action == "set_game_mode":
+                return await self._send_command(f"game_mode/{'on' if value else 'off'}")
+            elif action == "set_low_latency":
+                return await self._send_command(f"low_latency/{'on' if value else 'off'}")
             else:
                 logger.warning(f"Unsupported TV action: {action}")
                 return False

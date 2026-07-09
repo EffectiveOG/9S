@@ -328,8 +328,10 @@ class JarvisCore:
     
     async def _handle_speech_event(self, data: Dict[str, Any]):
         """Handle speech recognition events."""
-        text = data["text"].lower()
-        
+        text = (data.get("text") or "").lower()
+        if not text:
+            return
+
         # Check for system commands
         if "jarvis" in text:
             if "stop" in text or "shutdown" in text:
@@ -344,8 +346,10 @@ class JarvisCore:
     
     async def _handle_device_event(self, data: Dict[str, Any]):
         """Handle device state update events."""
-        device_id = data["device_id"]
-        state = data["state"]
+        device_id = data.get("device_id")
+        state = data.get("state")
+        if device_id is None:
+            return
         
         # Update device state
         self.state.setdefault("devices", {})[device_id] = state
@@ -386,9 +390,31 @@ class JarvisCore:
             await self._report_status()
     
     def _parse_speech_command(self, text: str) -> Optional[Dict[str, Any]]:
-        """Parse speech text into system command."""
-        # Implement command parsing logic
-        pass
+        """Parse speech text into a system command.
+
+        Handles scene activation ("... movie night") and a system restart.
+        Device-level commands (turn on/off a device) are handled directly by
+        the automation component, so they are intentionally not duplicated here.
+        """
+        text = text.lower()
+
+        # Scene activation: match any known scene by id or its readable form.
+        automation = self.components.get("automation")
+        scene_manager = getattr(automation, "scene_manager", None) if automation else None
+        if scene_manager is not None:
+            for scene_name in scene_manager.scenes:
+                readable = scene_name.replace("_", " ")
+                if scene_name in text or readable in text:
+                    return {
+                        "type": "scene_control",
+                        "data": {"action": "activate", "scene": scene_name},
+                    }
+
+        # System control
+        if "restart" in text or "reboot" in text:
+            return {"type": "system_control", "data": {"action": "restart"}}
+
+        return None
     
     async def _report_status(self):
         """Report system status through speech."""

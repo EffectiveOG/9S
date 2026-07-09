@@ -27,13 +27,32 @@ def create_tables(conn):
             confidence REAL NOT NULL,
             hand_index INTEGER NOT NULL
         );
-        
-        CREATE INDEX IF NOT EXISTS idx_object_timestamp 
+
+        CREATE TABLE IF NOT EXISTS speech_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            text TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS device_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            device_id TEXT,
+            state TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_object_timestamp
         ON object_detections(timestamp);
-        
-        CREATE INDEX IF NOT EXISTS idx_face_timestamp 
+
+        CREATE INDEX IF NOT EXISTS idx_face_timestamp
         ON face_detections(timestamp);
-        
-        CREATE INDEX IF NOT EXISTS idx_gesture_timestamp 
+
+        CREATE INDEX IF NOT EXISTS idx_gesture_timestamp
         ON gesture_detections(timestamp);
+
+        CREATE INDEX IF NOT EXISTS idx_speech_timestamp
+        ON speech_events(timestamp);
+
+        CREATE INDEX IF NOT EXISTS idx_device_timestamp
+        ON device_events(timestamp);
     """)

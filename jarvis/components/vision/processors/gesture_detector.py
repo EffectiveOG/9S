@@ -101,8 +101,8 @@ class GestureDetector:
             # Convert frame to RGB
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             
-            # Process with MediaPipe
-            results = self.hands.process(frame_rgb)
+            # Process with MediaPipe off the event loop (blocking call)
+            results = await asyncio.to_thread(self.hands.process, frame_rgb)
             
             # Process detections
             gestures = []

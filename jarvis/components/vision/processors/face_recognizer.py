@@ -131,10 +131,11 @@ class FaceRecognizer:
     async def identify(self, frame: np.ndarray) -> Dict[str, List]:
         """Identify faces in frame."""
         try:
-            # Get face locations and encodings
-            face_locations = face_recognition.face_locations(frame)
-            face_encodings = face_recognition.face_encodings(frame, face_locations)
-            
+            # Get face locations and encodings off the event loop (these calls
+            # are CPU-heavy and would otherwise block all other coroutines).
+            face_locations = await self._async_face_locations(frame)
+            face_encodings = await self._async_face_encodings(frame, face_locations)
+
             # Match faces against known faces
             results = []
             for face_encoding, face_location in zip(face_encodings, face_locations):
