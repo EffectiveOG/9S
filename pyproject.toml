@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "Modular local-first AI home assistant (vision, audio, memory, automation) with a FastAPI dashboard."
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Viny" }]
 dependencies = [
     "fastapi",
     "uvicorn",

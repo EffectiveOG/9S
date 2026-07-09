@@ -176,17 +176,15 @@ pylint jarvis       # lint
 
 ## Known limitations
 
-- The control endpoints (`/api/command`, scene/device control) are currently
-  **unauthenticated** — restrict network exposure or add auth before production use.
-- The PyQt desktop GUI (`jarvis_gui.py`) is incomplete and references component
-  methods that don't yet exist.
-- The existing test suite targets an older component API and needs updating.
-- Scene definitions in `config/scenes.json` reference some device actions and a
-  `blinds` device type that no controller implements yet.
+- The PyQt desktop GUI (`jarvis_gui.py`) is experimental. The component
+  accessors it needs now exist, but it hasn't been fully validated end-to-end.
+- `config/scenes.json` references a `blinds` device type that has no controller
+  yet; those actions are skipped gracefully at runtime.
+- The vision/audio stacks require host hardware (camera, microphone, and ideally
+  a GPU/Apple Silicon), so they don't run in the base Docker image.
 
 ---
 
 ## License
 
-No license specified yet. Add one (e.g. `LICENSE` with MIT/Apache-2.0) before
-publishing if you intend others to use it.
+Released under the [MIT License](LICENSE).
