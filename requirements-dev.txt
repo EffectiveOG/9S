@@ -1,0 +1,17 @@
+# Lightweight dependencies for running the test suite / CI.
+# Heavy ML libraries (torch, opencv, mediapipe, ...) are stubbed in
+# tests/conftest.py, so they are intentionally NOT installed here.
+
+pytest==7.4.3
+pytest-asyncio==0.21.1
+
+# Needed to import the modules under test
+fastapi==0.104.1
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-dotenv==1.0.0
+pydantic==2.4.2
+
+# Linters (informational in CI)
+black==23.10.1
+pylint==3.0.2

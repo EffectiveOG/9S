@@ -33,3 +33,5 @@ jarvis/components/audio/Procedures_Blue_Lease.xlsx
 *.docx
 *.xlsx
 ~$*
+
+.pytest_cache/
