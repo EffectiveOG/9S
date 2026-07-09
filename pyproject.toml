@@ -28,7 +28,7 @@ dependencies = [
 vision = ["opencv-python", "ultralytics", "torch", "torchvision", "face-recognition", "mediapipe"]
 audio = ["openai-whisper", "TTS", "pyaudio", "sounddevice", "torchaudio"]
 metrics = ["psutil", "GPUtil"]
-gui = ["PyQt6", "qasync", "qtmodern"]
+gui = ["PyQt6", "qasync"]
 dev = ["pytest", "pytest-asyncio", "black", "pylint"]
 
 [project.scripts]

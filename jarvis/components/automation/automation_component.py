@@ -11,6 +11,7 @@ from .controllers.base_controller import BaseController
 from .controllers.tv_controller import TVController
 from .controllers.light_controller import LightController
 from .controllers.game_console_controller import GameConsoleController
+from .controllers.blinds_controller import BlindsController
 from .controllers.scene_manager import SceneManager
 from ...utils.logging_utils import get_logger
 
@@ -76,7 +77,8 @@ class AutomationComponent(BaseComponent):
         controller_map = {
             'tv': TVController,
             'light': LightController,
-            'game_console': GameConsoleController
+            'game_console': GameConsoleController,
+            'blinds': BlindsController,
         }
         
         for device_config in self.config.get("devices", []):

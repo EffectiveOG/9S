@@ -146,6 +146,12 @@
                 }
             },
             {
+                "type": "blinds",
+                "id": "living_room_blinds",
+                "ip_address": "",
+                "port": 80
+            },
+            {
                 "type": "game_console",
                 "id": "ps5_console",
                 "console_type": "ps5",
