@@ -43,6 +43,7 @@ alembic==1.12.1
 # Utilities
 python-dotenv==1.0.0
 pydantic==2.4.2
+pydantic-settings==2.0.3
 rich==13.6.0  # For better console output
 typer==0.9.0  # For CLI interfaces
 

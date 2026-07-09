@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis"
+version = "0.1.0"
+description = "Modular local-first AI home assistant (vision, audio, memory, automation) with a FastAPI dashboard."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "websockets",
+    "python-multipart",
+    "python-jose[cryptography]",
+    "passlib[bcrypt]",
+    "python-dotenv",
+    "pydantic",
+    "pydantic-settings",
+    "aiohttp",
+    "sqlalchemy",
+]
+
+[project.optional-dependencies]
+vision = ["opencv-python", "ultralytics", "torch", "torchvision", "face-recognition", "mediapipe"]
+audio = ["openai-whisper", "TTS", "pyaudio", "sounddevice", "torchaudio"]
+metrics = ["psutil", "GPUtil"]
+gui = ["PyQt6", "qasync", "qtmodern"]
+dev = ["pytest", "pytest-asyncio", "black", "pylint"]
+
+[project.scripts]
+jarvis = "jarvis.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["jarvis*"]
+
+[tool.black]
+line-length = 100

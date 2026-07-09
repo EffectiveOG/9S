@@ -1,14 +1,9 @@
 # setup.py
+#
+# Packaging metadata now lives in pyproject.toml. This shim remains only for
+# `pip install -e .` with older tooling; it reads configuration from
+# pyproject.toml.
 
-from setuptools import setup, find_packages
+from setuptools import setup
 
-setup(
-    name="jarvis",
-    version="0.1.0",
-    packages=find_packages(),
-    install_requires=[
-        "asyncio",
-        "aioconsole",
-        "logging",
-    ],
-)
+setup()

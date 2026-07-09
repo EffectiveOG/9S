@@ -44,6 +44,7 @@ class VisionComponent(BaseComponent):
         self.frame_size = config.get("frame_size", (1280, 720))
         self.frame_count = 0
         self.camera = None
+        self.latest_frame = None  # most recent captured frame (for the GUI)
 
         # Camera orientation
         self.flip_horizontal = config.get("flip_horizontal", True)  # Mirror fix
@@ -88,6 +89,9 @@ class VisionComponent(BaseComponent):
         self.preview_window_name = "Jarvis Vision"
         self.preview_scale = config.get("preview_scale", 1.0)
 
+    def get_frame(self):
+        """Return the most recently captured frame (or None). Used by the GUI."""
+        return self.latest_frame
 
     async def process_frames(self):
         """Main processing loop for camera frames."""
@@ -103,6 +107,7 @@ class VisionComponent(BaseComponent):
 
                 # Apply orientation transformations
                 frame = self._process_frame_orientation(frame)
+                self.latest_frame = frame  # expose for the GUI preview
 
                 self.frame_count += 1
                 if self.frame_count % self.frame_skip != 0:

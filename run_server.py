@@ -1,12 +1,11 @@
-# run_server.py (put this in your 9S directory)
+# run_server.py
+#
+# Thin wrapper kept for convenience. The canonical way to start Jarvis is:
+#     python -m jarvis
+# Host/port/SSL/reload come from JARVIS_* env vars overlaid on
+# config/jarvis_config.json (see jarvis/settings.py).
 
-import uvicorn
+from jarvis.__main__ import main
 
 if __name__ == "__main__":
-    uvicorn.run(
-        "jarvis.web.server:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
+    main()

@@ -429,14 +429,8 @@ async def handle_websocket_message(websocket: WebSocket, message: Dict):
 async def start_background_tasks():
     asyncio.create_task(broadcast_state())
 
-# Start server if run directly
+# Start server if run directly. Delegates to the canonical entrypoint so host/
+# port/SSL/reload are resolved consistently (see jarvis/__main__.py + settings).
 if __name__ == "__main__":
-    uvicorn.run(
-        "server:app",
-        host="127.0.0.1",
-        port=8000,
-        reload=True,
-        log_level="info",
-        ssl_keyfile="config/ssl/key.pem",
-        ssl_certfile="config/ssl/cert.pem"
-    )
+    from jarvis.__main__ import main
+    main()

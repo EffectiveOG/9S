@@ -37,6 +37,7 @@ class AudioComponent(BaseComponent):
         self.output_stream = None
         self._loop = None            # main event loop, captured in start()
         self.is_speech_detected = False  # read by MetricsCollector
+        self._last_transcript = None     # last recognized text (polled by the GUI)
         
         # Voice activity detection
         self.vad_threshold = config.get("vad_threshold", 0.1)  # Adjusted for higher sensitivity
@@ -183,6 +184,7 @@ class AudioComponent(BaseComponent):
             text = await self.asr.transcribe(audio_data)
             if text:
                 logger.info(f"Recognized speech: {text}")
+                self._last_transcript = text
                 message = Message(
                     sender=self.name,
                     message_type="speech_recognized",
@@ -209,6 +211,12 @@ class AudioComponent(BaseComponent):
     async def test_tts(self, text="Hello, this is a test."):
         """Test TTS by synthesizing and playing a test message."""
         await self.speak(text)
+
+    def process_audio(self):
+        """Return and clear the last recognized transcript (polled by the GUI)."""
+        text = self._last_transcript
+        self._last_transcript = None
+        return text
 
     def add_speech_callback(self, callback: Callable[[str], None]):
         """Add callback for speech recognition events."""
