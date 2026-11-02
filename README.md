@@ -24,6 +24,10 @@ lights, and game consoles — via voice, gestures, and room occupancy.
 - **Automation** — scene orchestration and device control (smart TV, Philips
   Hue / LIFX lights, PS5 / Xbox) driven by voice commands, gestures, and
   occupancy rules.
+- **Conversation** — free-form spoken (or REST) Q&A with a local LLM served by
+  [Ollama](https://ollama.com) (default `qwen2.5:3b`), aware of what the camera
+  sees and of who is in front of it; an optional multimodal model (`llava`)
+  describes the live frame. Ported from the Ciel project.
 - **Web dashboard** — FastAPI + WebSocket interface for status, metrics, scene
   control, and backups, protected by JWT authentication.
 
@@ -37,13 +41,19 @@ lights, and game consoles — via voice, gestures, and room occupancy.
                          └──────┬───────┘
         message bus  ┌──────────┼───────────┐
                      ▼          ▼           ▼
-              ┌──────────┐ ┌────────┐ ┌────────────┐ ┌────────────┐
-              │  Vision  │ │ Audio  │ │  Memory    │ │ Automation │
-              └────┬─────┘ └───┬────┘ └─────┬──────┘ └─────┬──────┘
-                   │           │            │              │
-             detectors     Whisper/TTS   SQLite      device controllers
-          (YOLO/face/gesture)                         (TV / lights / console)
+              ┌──────────┐ ┌────────┐ ┌────────────┐ ┌────────────┐ ┌──────────────┐
+              │  Vision  │ │ Audio  │ │  Memory    │ │ Automation │ │ Conversation │
+              └────┬─────┘ └───┬────┘ └─────┬──────┘ └─────┬──────┘ └──────┬───────┘
+                   │           │            │              │               │
+             detectors     Whisper/TTS   SQLite      device controllers  Ollama LLM
+          (YOLO/face/gesture)                     (TV / lights / console) (+ llava)
 ```
+
+Speech routing: an utterance containing the wake word is first matched against
+system commands (`stop`, `status`, `restart`) and scenes, then against device
+commands (automation). Anything else goes to the conversation component, which
+answers through TTS. Vision updates are also fed to the conversation component
+so questions like *« Jarvis, qu'est-ce que tu vois ? »* use the current scene.
 
 Each component subclasses `BaseComponent` and publishes `Message` objects. The
 core wires producers (vision, audio) to consumers (memory, automation) and to
@@ -62,7 +72,8 @@ jarvis/
 │   ├── vision/      # VisionComponent + object/face/gesture processors
 │   ├── audio/       # AudioComponent + Whisper ASR and TTS
 │   ├── memory/      # MemoryComponent + SQLite schema
-│   └── automation/  # AutomationComponent, SceneManager, device controllers
+│   ├── automation/  # AutomationComponent, SceneManager, device controllers
+│   └── conversation/# ConversationComponent + async Ollama client
 ├── web/             # FastAPI server, security (JWT), metrics, backups
 └── utils/           # logging helpers
 config/              # jarvis_config.json, scenes.json, automation_rules.json
@@ -118,6 +129,32 @@ Two layers of configuration:
 > **Do not commit real device tokens or API keys** (Hue keys, PSN/Xbox tokens)
 > into `config/jarvis_config.json`. Keep secrets in `.env`.
 
+### Conversation (local LLM)
+
+The conversation component needs an [Ollama](https://ollama.com) server
+running locally (it is optional: if Ollama is unreachable Jarvis still starts,
+canned answers keep working and an apology is spoken for other questions).
+
+```bash
+ollama pull qwen2.5:3b     # text model
+ollama pull llava:7b       # optional: describes the camera frame
+```
+
+Settings live in the `conversation` section of `config/jarvis_config.json`:
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `enabled` | `true` | Turn the component off entirely |
+| `assistant_name` / `owner_name` | `Jarvis` / `null` | Names used in prompts; the owner is greeted personally when their face is recognised or name spoken |
+| `language` | `fr` | `fr` or `en` — prompt, canned answers, fallback messages |
+| `wake_word` / `require_wake_word` | `jarvis` / `true` | Only answer utterances that contain the wake word |
+| `history_size` | `6` | Exchanges kept as chat context |
+| `llm.model` / `llm.vision_model` | `qwen2.5:3b` / `null` | Ollama models (set `vision_model` to `null` to skip frame description) |
+| `llm.base_url`, `temperature`, `max_tokens`, `timeout`, `auto_pull` | | Ollama connection and generation options |
+
+For French conversations, also set `"language": "fr"` in the `audio` section so
+Whisper transcribes French.
+
 ### Authentication
 
 The dashboard uses JWT auth. On first start an admin account is seeded from
@@ -160,6 +197,8 @@ curl -X POST http://localhost:8000/token \
 | GET    | `/api/devices`                    | no   | Device states            |
 | GET    | `/api/metrics`                    | yes  | System/component metrics |
 | POST   | `/api/backup`                     | yes  | Create a backup          |
+| POST   | `/api/chat`                       | yes  | Ask the assistant (`{"text": "...", "speak": false}`) |
+| DELETE | `/api/chat/history`               | yes  | Reset conversation memory |
 | WS     | `/ws`                             | yes  | Live state + metrics     |
 
 ---
