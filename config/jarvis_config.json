@@ -107,6 +107,15 @@
             "max_tokens": 200,
             "timeout": 60,
             "auto_pull": false
+        },
+        "web_search": {
+            "enabled": true,
+            "provider": "auto",
+            "max_results": 3,
+            "fetch_content": false,
+            "timeout": 10,
+            "region": "fr-fr",
+            "time_limit": "m"
         }
     },
     "automation": {

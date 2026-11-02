@@ -227,7 +227,7 @@ async def chat(payload: Dict[str, Any],
         raise HTTPException(status_code=413, detail="'text' is too long (max 2000 chars)")
     answer = await conversation.respond(text, speak=bool(payload.get("speak", False)))
     return {"response": answer, **{k: conversation.state.get(k)
-                                   for k in ("last_source", "last_latency")}}
+                                   for k in ("last_source", "last_latency", "last_sources")}}
 
 @app.delete("/api/chat/history")
 async def clear_chat_history(current_user: Dict = Depends(security.get_current_user)):

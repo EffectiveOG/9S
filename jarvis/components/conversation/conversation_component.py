@@ -12,7 +12,9 @@ What it brings over from Ciel's ConversationModule:
   * owner recognition: when the configured owner's face is recognised (or
     their name is spoken) the assistant addresses them personally - Ciel's
     "Master Viny" feature, made configurable instead of hard-coded;
-  * TTS-friendly response cleaning and echo prevention while speaking.
+  * TTS-friendly response cleaning and echo prevention while speaking;
+  * web search (Google Custom Search, DuckDuckGo fallback) for questions
+    that need fresh information - see web_search.py.
 
 Unlike Ciel (threads + blocking calls) everything here is asyncio-native and
 fits 9S's BaseComponent / Message bus model.
@@ -23,12 +25,14 @@ import base64
 import re
 import time
 from collections import Counter, OrderedDict, deque
+from datetime import datetime
 from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional
 
 from ...core.base_component import BaseComponent
 from ...core.message import Message
 from ...utils.logging_utils import get_logger
 from .llm_client import LLMError, OllamaClient
+from .web_search import WebSearch
 
 logger = get_logger(__name__)
 
@@ -48,6 +52,12 @@ _TEXTS = {
         ),
         "owner": "Tu parles à {owner}, ton créateur. Adresse-toi à lui par son prénom.",
         "scene": "DESCRIPTION DE LA SCÈNE ACTUELLE :\n{scene}",
+        "date": "Nous sommes le {date}.",
+        "search": (
+            "RÉSULTATS DE RECHERCHE WEB pour « {query} » :\n{results}\n"
+            "Résume ces informations naturellement en quelques phrases, cite la "
+            "source si utile, et dis-le si elles ne répondent pas à la question."
+        ),
         "no_camera": "La caméra n'est pas disponible pour le moment.",
         "error": "Désolé, je n'arrive pas à réfléchir pour le moment.",
         "empty": "Je vous écoute.",
@@ -80,6 +90,12 @@ _TEXTS = {
         ),
         "owner": "You are talking to {owner}, your creator. Address them by name.",
         "scene": "CURRENT SCENE DESCRIPTION:\n{scene}",
+        "date": "Today is {date}.",
+        "search": (
+            "WEB SEARCH RESULTS for \"{query}\":\n{results}\n"
+            "Summarise this information naturally in a few sentences, mention the "
+            "source when useful, and say so if it doesn't answer the question."
+        ),
         "no_camera": "The camera is not available right now.",
         "error": "Sorry, I can't think right now.",
         "empty": "I'm listening.",
@@ -107,13 +123,15 @@ _ROLE_PREFIX = re.compile(
     re.IGNORECASE,
 )
 _MARKDOWN = re.compile(r"(\*\*|__|\*|`+|^#+\s*|^\s*[-•]\s+)", re.MULTILINE)
-_SENTENCE = re.compile(r"[^.!?]+[.!?]*")
+# Split after . ! ? only when followed by whitespace, so "example.org" or "3.5" stay whole.
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+")
 
 
 class ConversationComponent(BaseComponent):
     """LLM-backed conversation component (local Ollama)."""
 
-    def __init__(self, config: Dict[str, Any], llm_client: Optional[Any] = None):
+    def __init__(self, config: Dict[str, Any], llm_client: Optional[Any] = None,
+                 web_search: Optional[Any] = None):
         super().__init__("conversation")
         self.config = config or {}
         llm_cfg = self.config.get("llm", {}) or {}
@@ -141,6 +159,15 @@ class ConversationComponent(BaseComponent):
             timeout=float(llm_cfg.get("timeout", 60)),
         )
         self.llm_available = False
+
+        search_cfg = self.config.get("web_search", {}) or {}
+        if web_search is not None:
+            self.web_search = web_search
+        elif search_cfg.get("enabled", True):
+            self.web_search = WebSearch(search_cfg, language=self.language)
+        else:
+            self.web_search = None
+        self._last_sources: List[str] = []
 
         self.history: Deque[Dict[str, str]] = deque(
             maxlen=max(0, int(self.config.get("history_size", 6))) * 2
@@ -177,13 +204,22 @@ class ConversationComponent(BaseComponent):
             # Non-fatal: canned answers still work, and we retry on each request.
             logger.warning(f"Conversation LLM unavailable at startup: {e}")
             self.llm_available = False
-        self.update_state({"llm_available": self.llm_available, "model": self.model})
+        self.update_state({
+            "llm_available": self.llm_available,
+            "model": self.model,
+            "web_search": bool(self.web_search and self.web_search.available),
+        })
+        if self.web_search is not None and not self.web_search.available:
+            logger.warning("Web search enabled but no backend available "
+                           "(set GOOGLE_API_KEY/GOOGLE_CSE_ID or install `ddgs`)")
 
     async def stop(self):
-        try:
-            await self.llm.close()
-        except Exception as e:
-            logger.debug(f"Error closing LLM client: {e}")
+        for closable in (self.llm, self.web_search):
+            try:
+                if closable is not None:
+                    await closable.close()
+            except Exception as e:
+                logger.debug(f"Error closing client: {e}")
         await super().stop()
 
     @staticmethod
@@ -223,6 +259,7 @@ class ConversationComponent(BaseComponent):
         async with self._lock:
             started = time.time()
             query = self._strip_wake_word(text)
+            self._last_sources = []
             if not query:
                 answer, source = self.texts["empty"], "canned"
             else:
@@ -233,12 +270,14 @@ class ConversationComponent(BaseComponent):
                 "last_response": answer,
                 "last_source": source,
                 "last_latency": round(time.time() - started, 3),
+                "last_sources": list(self._last_sources),
                 "llm_available": self.llm_available,
             })
             await self.publish(Message(
                 sender=self.name,
                 message_type="conversation_response",
-                data={"query": query, "response": answer, "source": source},
+                data={"query": query, "response": answer, "source": source,
+                      "sources": list(self._last_sources)},
             ))
             if speak:
                 await self._speak(answer)
@@ -251,13 +290,19 @@ class ConversationComponent(BaseComponent):
             return canned, "canned"
 
         is_visual = self._is_vision_query(query)
+        needs_search = (not is_visual and self.web_search is not None
+                        and self.web_search.available
+                        and self.web_search.is_search_query(query))
+        # Visual and web answers depend on the moment, so they are never cached.
+        cacheable = not is_visual and not needs_search
         key = self._cache_key(query, owner_present)
-        if not is_visual and key in self._cache:
+        if cacheable and key in self._cache:
             self._cache.move_to_end(key)
             return self._cache[key], "cache"
 
         scene = await self._scene_context() if is_visual else ""
-        messages = self._build_messages(query, scene, owner_present)
+        search = await self._search_context(query) if needs_search else ""
+        messages = self._build_messages(query, scene, owner_present, search)
         try:
             raw = await self.llm.chat(self.model, messages, self.options)
             self.llm_available = True
@@ -266,12 +311,25 @@ class ConversationComponent(BaseComponent):
             self.llm_available = False
             return self.texts["error"], "error"
 
-        answer = self.clean_response(raw, long_form=is_visual, fallback=self.texts["empty"])
+        answer = self.clean_response(raw, long_form=bool(is_visual or search),
+                                     fallback=self.texts["empty"])
         self.history.append({"role": "user", "content": query})
         self.history.append({"role": "assistant", "content": answer})
-        if not is_visual:
+        if cacheable:
             self._cache_put(key, answer)
-        return answer, "llm"
+        return answer, ("web" if search else "llm")
+
+    async def _search_context(self, query: str) -> str:
+        try:
+            results = await self.web_search.search(query)
+        except Exception as e:
+            logger.warning(f"Web search failed: {e}")
+            return ""
+        if not results:
+            return ""
+        self._last_sources = [r["url"] for r in results if r.get("url")]
+        return self.texts["search"].format(query=query,
+                                           results=WebSearch.summarize(results))
 
     async def _speak(self, text: str):
         if self.speaker is None:
@@ -332,8 +390,10 @@ class ConversationComponent(BaseComponent):
         self.history.clear()
         self._cache.clear()
 
-    def _build_messages(self, query: str, scene: str, owner_present: bool) -> List[Dict[str, Any]]:
+    def _build_messages(self, query: str, scene: str, owner_present: bool,
+                        search: str = "") -> List[Dict[str, Any]]:
         system = self.texts["system"].format(name=self.assistant_name)
+        system += "\n" + self.texts["date"].format(date=datetime.now().strftime("%Y-%m-%d %H:%M"))
         if owner_present and self.owner_name:
             system += "\n" + self.texts["owner"].format(owner=self.owner_name)
         extra = self.config.get("system_prompt")
@@ -341,6 +401,8 @@ class ConversationComponent(BaseComponent):
             system += "\n" + str(extra)
         if scene:
             system += "\n\n" + self.texts["scene"].format(scene=scene)
+        if search:
+            system += "\n\n" + search
         return [{"role": "system", "content": system}, *self.history,
                 {"role": "user", "content": query}]
 
@@ -429,7 +491,7 @@ class ConversationComponent(BaseComponent):
         seen = set()
         for line in response.splitlines():
             line = _ROLE_PREFIX.sub("", _MARKDOWN.sub("", line)).strip()
-            for sentence in _SENTENCE.findall(line):
+            for sentence in _SENTENCE_BREAK.split(line):
                 sentence = " ".join(sentence.split())
                 norm = sentence.lower().strip(".,!? ")
                 if len(norm) < 2 or norm in seen:

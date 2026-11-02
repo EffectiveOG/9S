@@ -27,7 +27,9 @@ lights, and game consoles — via voice, gestures, and room occupancy.
 - **Conversation** — free-form spoken (or REST) Q&A with a local LLM served by
   [Ollama](https://ollama.com) (default `qwen2.5:3b`), aware of what the camera
   sees and of who is in front of it; an optional multimodal model (`llava`)
-  describes the live frame. Ported from the Ciel project.
+  describes the live frame. Questions needing fresh information (news,
+  weather, prices…) trigger a web search (Google Custom Search, DuckDuckGo
+  fallback) whose results ground the answer. Ported from the Ciel project.
 - **Web dashboard** — FastAPI + WebSocket interface for status, metrics, scene
   control, and backups, protected by JWT authentication.
 
@@ -73,7 +75,7 @@ jarvis/
 │   ├── audio/       # AudioComponent + Whisper ASR and TTS
 │   ├── memory/      # MemoryComponent + SQLite schema
 │   ├── automation/  # AutomationComponent, SceneManager, device controllers
-│   └── conversation/# ConversationComponent + async Ollama client
+│   └── conversation/# ConversationComponent, async Ollama client, web search
 ├── web/             # FastAPI server, security (JWT), metrics, backups
 └── utils/           # logging helpers
 config/              # jarvis_config.json, scenes.json, automation_rules.json
@@ -151,6 +153,24 @@ Settings live in the `conversation` section of `config/jarvis_config.json`:
 | `history_size` | `6` | Exchanges kept as chat context |
 | `llm.model` / `llm.vision_model` | `qwen2.5:3b` / `null` | Ollama models (set `vision_model` to `null` to skip frame description) |
 | `llm.base_url`, `temperature`, `max_tokens`, `timeout`, `auto_pull` | | Ollama connection and generation options |
+
+#### Web search
+
+Questions that look time-sensitive (*actualités, météo, prix, cours, résultats,
+"cherche sur internet"…*, or a year such as 2026) are searched on the web and the
+top results are given to the LLM, which summarises them; the source URLs are
+returned by `/api/chat` as `last_sources`. Search answers are never cached.
+
+- **Google Custom Search** is used when `GOOGLE_API_KEY` and `GOOGLE_CSE_ID` are
+  set in `.env` (create an engine at <https://programmablesearchengine.google.com/>).
+- Otherwise, or if Google fails, **DuckDuckGo** is used (no key, needs the
+  `ddgs` package from `requirements.txt`).
+- With neither available, search is skipped and the LLM answers alone.
+
+Options under `conversation.web_search`: `enabled`, `provider`
+(`auto` | `google` | `duckduckgo`), `max_results` (3), `fetch_content` (false —
+also download and extract each result page; richer but slower), `timeout`,
+`region` (`fr-fr`), `time_limit` (`d` | `w` | `m` | `y`).
 
 For French conversations, also set `"language": "fr"` in the `audio` section so
 Whisper transcribes French.

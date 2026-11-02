@@ -31,11 +31,11 @@ class FakeLLM:
         self.closed = True
 
 
-def make(config=None, **llm_kwargs):
+def make(config=None, web_search=None, **llm_kwargs):
     llm = FakeLLM(**llm_kwargs)
-    cfg = {"owner_name": "Viny", "language": "fr"}
+    cfg = {"owner_name": "Viny", "language": "fr", "web_search": {"enabled": False}}
     cfg.update(config or {})
-    return ConversationComponent(cfg, llm_client=llm), llm
+    return ConversationComponent(cfg, llm_client=llm, web_search=web_search), llm
 
 
 async def test_canned_answer_skips_llm_and_personalises_for_owner():
@@ -139,3 +139,8 @@ def test_clean_response_limits_length():
     assert ConversationComponent.clean_response(long).count(".") == 3
     assert ConversationComponent.clean_response(long, long_form=True).count(".") == 8
     assert ConversationComponent.clean_response("", fallback="x") == "x"
+
+
+def test_clean_response_keeps_domains_and_decimals():
+    text = "Selon example.org, le taux est de 3.5 %. C'est stable."
+    assert ConversationComponent.clean_response(text) == text
