@@ -16,6 +16,38 @@ from ...utils.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
+
+def list_audio_devices(audio, kind: str = "input"):
+    """[(index, name)] of the devices that can record (kind="input") or play."""
+    channels_key = "maxInputChannels" if kind == "input" else "maxOutputChannels"
+    devices = []
+    for index in range(audio.get_device_count()):
+        info = audio.get_device_info_by_index(index)
+        if info.get(channels_key, 0) > 0:
+            devices.append((index, info.get("name", f"device {index}")))
+    return devices
+
+
+def resolve_audio_device(audio, wanted: Any, kind: str = "input") -> Optional[int]:
+    """Turn a configured device (index or part of its name) into a PyAudio index.
+
+    None, "" or an unset "${VAR}" mean the system default. A name matches
+    case-insensitively on any part ("MacBook" finds "MacBook Pro Microphone").
+    """
+    if wanted is None or (isinstance(wanted, str) and (not wanted.strip() or "${" in wanted)):
+        return None
+    if isinstance(wanted, int) or (isinstance(wanted, str) and wanted.strip().isdigit()):
+        return int(wanted)
+    wanted_lower = str(wanted).strip().lower()
+    devices = list_audio_devices(audio, kind)
+    for index, name in devices:
+        if wanted_lower in name.lower():
+            return index
+    logger.warning(f"No {kind} audio device matching '{wanted}'; using the system default. "
+                   f"Available: {', '.join(f'{i}: {n}' for i, n in devices)}")
+    return None
+
+
 class AudioComponent(BaseComponent):
     """Main audio component handling speech recognition and synthesis."""
     
@@ -65,13 +97,27 @@ class AudioComponent(BaseComponent):
         self._initialize_audio_devices()
     
     def _initialize_audio_devices(self):
-        """Get and log default audio devices."""
+        """Resolve the configured microphone / speakers and log what is used."""
         try:
-            self.input_device = self.audio.get_default_input_device_info()
-            self.output_device = self.audio.get_default_output_device_info()
-            logger.info(f"Input device: {self.input_device['name']}")
-            logger.info(f"Output device: {self.output_device['name']}")
+            self.input_index = resolve_audio_device(
+                self.audio, self.config.get("input_device", self.config.get("input_device_index")),
+                "input")
+            self.output_index = resolve_audio_device(
+                self.audio, self.config.get("output_device", self.config.get("output_device_index")),
+                "output")
+            self.input_device = (self.audio.get_device_info_by_index(self.input_index)
+                                 if self.input_index is not None
+                                 else self.audio.get_default_input_device_info())
+            self.output_device = (self.audio.get_device_info_by_index(self.output_index)
+                                  if self.output_index is not None
+                                  else self.audio.get_default_output_device_info())
+            default = " (system default)"
+            logger.info(f"Microphone: {self.input_device['name']}"
+                        f"{default if self.input_index is None else ''}")
+            logger.info(f"Speakers: {self.output_device['name']}"
+                        f"{default if self.output_index is None else ''}")
         except Exception as e:
+            self.input_index = self.output_index = None
             logger.error(f"Error initializing audio devices: {e}")
     
     async def start(self):
@@ -82,10 +128,9 @@ class AudioComponent(BaseComponent):
             # coroutines back onto it safely.
             self._loop = asyncio.get_running_loop()
 
-            # Device indices default to the system default (None) unless the
-            # config overrides them - hardcoding 0/1 broke on other machines.
-            input_index = self.config.get("input_device_index")
-            output_index = self.config.get("output_device_index")
+            # Resolved in _initialize_audio_devices (None = system default).
+            input_index = self.input_index
+            output_index = self.output_index
 
             # Open input stream in callback mode so audio is actually captured
             # into input_queue (previously no callback was registered).

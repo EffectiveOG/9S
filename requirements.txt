@@ -26,11 +26,17 @@ fastapi==0.104.1
 uvicorn==0.24.0
 python-multipart==0.0.6
 websockets==11.0.3
-aiohttp==3.9.1              # used by automation device controllers
+aiohttp==3.9.1              # Home Assistant WebSocket client + conversation (Ollama, Google search)
+aiomqtt>=2.0,<3             # Frigate events over MQTT (Mosquitto)
+
+# Conversation web search (optional; Google Custom Search needs no extra package)
+ddgs>=9.0                   # DuckDuckGo fallback (formerly duckduckgo-search)
+beautifulsoup4>=4.12        # page text extraction when web_search.fetch_content is on
 
 # Auth (web/security.py)
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+bcrypt==4.0.1               # passlib 1.7.4 breaks with bcrypt>=4.1
 
 # System metrics (web/metrics.py) - optional, degrade gracefully if absent
 psutil==5.9.6

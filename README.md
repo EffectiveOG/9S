@@ -5,8 +5,16 @@ vision, speech recognition and synthesis, persistent memory, and smart-home
 automation behind a single asynchronous core and a web dashboard.
 
 It is designed to run on a personal machine (developed and tuned for Apple
-Silicon / macOS) and to control devices on your local network — TVs, smart
-lights, and game consoles — via voice, gestures, and room occupancy.
+Silicon / macOS). Rather than re-implementing a home-automation and NVR stack,
+Jarvis builds on the ones already running in the house:
+
+- **[Frigate](https://frigate.video)** watches the camera network (object
+  detection, face recognition, license plates, zones) — Jarvis consumes its
+  results over MQTT.
+- **[Home Assistant](https://www.home-assistant.io)** controls the devices and
+  knows who is home — Jarvis drives it over its WebSocket API.
+- The computer's own **webcam** stays local, for low-latency interaction
+  (hand gestures, who is sitting in front of the screen).
 
 > **Status:** early / work-in-progress. The core system, message bus, web API,
 > and component scaffolding are functional. See [Known limitations](#known-limitations)
@@ -16,14 +24,26 @@ lights, and game consoles — via voice, gestures, and room occupancy.
 
 ## Features
 
-- **Vision** — webcam object detection (YOLOv8), face recognition, and hand-gesture
-  detection, with an optional live preview window.
+- **Vision (local webcam)** — hand-gesture detection and face recognition of the
+  person at the computer, with an optional live preview window. Webcam object
+  detection (YOLOv8) is still available but off by default: Frigate covers it.
+- **Awareness** — a live model of the house built from Frigate (who/what is on
+  which camera and zone, recognized faces and plates, per-zone counts) and Home
+  Assistant presence entities.
 - **Audio** — microphone speech recognition (OpenAI Whisper) and text-to-speech.
 - **Memory** — detections and events persisted to a local SQLite database with
   automatic retention/cleanup.
-- **Automation** — scene orchestration and device control (smart TV, Philips
-  Hue / LIFX lights, PS5 / Xbox) driven by voice commands, gestures, and
-  occupancy rules.
+- **Automation** — scene orchestration and device control driven by voice
+  commands, gestures, and per-zone occupancy rules. Every device is a Home
+  Assistant entity: Jarvis has no device-specific code of its own.
+- **Conversation** — free-form spoken (or REST) Q&A with a local LLM served by
+  [Ollama](https://ollama.com) (default `qwen2.5:3b`), aware of what the camera
+  sees and of who is in front of it; an optional multimodal model (`llava`)
+  describes the live frame. Questions needing fresh information (news,
+  weather, prices…) trigger a web search (Google Custom Search, DuckDuckGo
+  fallback) whose results ground the answer. Questions about the house
+  (*« qui est à la maison ? »*, *« Alice est rentrée ? »*) are answered from
+  Awareness and its history instead. Ported from the Ciel project.
 - **Web dashboard** — FastAPI + WebSocket interface for status, metrics, scene
   control, and backups, protected by JWT authentication.
 
@@ -32,24 +52,49 @@ lights, and game consoles — via voice, gestures, and room occupancy.
 ## Architecture
 
 ```
-                         ┌──────────────┐
-                         │  JarvisCore  │   coordinator + event/command loops
-                         └──────┬───────┘
-        message bus  ┌──────────┼───────────┐
-                     ▼          ▼           ▼
-              ┌──────────┐ ┌────────┐ ┌────────────┐ ┌────────────┐
-              │  Vision  │ │ Audio  │ │  Memory    │ │ Automation │
-              └────┬─────┘ └───┬────┘ └─────┬──────┘ └─────┬──────┘
-                   │           │            │              │
-             detectors     Whisper/TTS   SQLite      device controllers
-          (YOLO/face/gesture)                         (TV / lights / console)
+  IP cameras ──► Frigate ──── MQTT (Mosquitto) ────┐
+                                                   ▼
+                         ┌──────────────┐   ┌─────────────┐
+  Mac webcam ──► Vision ─►  JarvisCore  ◄───┤  Awareness  │◄── HA presence
+  Microphone ──► Audio  ─►  message bus │   └──────┬──────┘     (person.*)
+                         └──┬─────┬───┬─┘          │ who/what is where
+                            ▼     ▼   ▼            ▼
+                       Memory  Automation   Conversation ── Ollama (+ web search)
+                      (SQLite)     │        (answers via TTS)
+                                   └── WebSocket ──► Home Assistant
+                                                     (lights, TV, covers…)
 ```
 
+Speech routing: an utterance containing the wake word is first matched against
+system commands (`stop`, `status`, `restart`) and scenes, then against device
+commands (automation). Anything else goes to the conversation component, which
+answers through TTS. Vision updates are also fed to the conversation component
+so questions like *« Jarvis, qu'est-ce que tu vois ? »* use the current scene.
+Questions about the house — who is home, who came by, where someone is, which
+car is in the driveway — get the Awareness world model (Frigate areas, people
+and plates last seen, Home Assistant presence) and the matching
+`awareness_events` history instead of a web search.
+
 Each component subclasses `BaseComponent` and publishes `Message` objects. The
-core wires producers (vision, audio) to consumers (memory, automation) and to
-its own event loop, so detections and speech flow through the system
-automatically. All work is asyncio-based; long-running loops (camera capture,
-audio capture, command processing) run as background tasks.
+core wires producers (vision, audio, awareness) to consumers (memory,
+automation) and to its own event loop, so detections, speech and presence
+changes flow through the system automatically. Everything is asyncio-based:
+the camera network's heavy, parallel work happens inside Frigate, so Jarvis
+itself only handles events and stays light.
+
+Awareness publishes these messages on the bus:
+
+| Message                | When                                                    |
+|------------------------|---------------------------------------------------------|
+| `presence_update`      | an object count changed in a Frigate camera or zone     |
+| `object_detected` / `object_ended` | Frigate starts / stops tracking an object   |
+| `person_identified`    | a face is recognized (once per tracked object)          |
+| `person_moved`         | an identified person changes camera or zone             |
+| `vehicle_identified`   | a license plate is read (once per tracked object)       |
+| `home_presence_update` | a Home Assistant `person.*` entity changes state        |
+
+Identifications and presence changes are stored in the `awareness_events`
+table, so Jarvis can answer "when did I last see…".
 
 ---
 
@@ -62,7 +107,10 @@ jarvis/
 │   ├── vision/      # VisionComponent + object/face/gesture processors
 │   ├── audio/       # AudioComponent + Whisper ASR and TTS
 │   ├── memory/      # MemoryComponent + SQLite schema
-│   └── automation/  # AutomationComponent, SceneManager, device controllers
+│   ├── awareness/   # AwarenessComponent (Frigate + HA presence world model)
+│   ├── automation/  # AutomationComponent, SceneManager, Home Assistant controller
+│   └── conversation/# ConversationComponent, async Ollama client, web search
+├── integrations/    # Home Assistant WebSocket client, Frigate MQTT client
 ├── web/             # FastAPI server, security (JWT), metrics, backups
 └── utils/           # logging helpers
 config/              # jarvis_config.json, scenes.json, automation_rules.json
@@ -115,8 +163,131 @@ Two layers of configuration:
   automation devices, scenes, performance limits). `config/scenes.json` and
   `config/automation_rules.json` define scenes and occupancy rules.
 
-> **Do not commit real device tokens or API keys** (Hue keys, PSN/Xbox tokens)
+> **Do not commit real device tokens or API keys** (Home Assistant token, MQTT password)
 > into `config/jarvis_config.json`. Keep secrets in `.env`.
+
+### Home Assistant
+
+Set `HA_URL` and `HA_TOKEN` (a long-lived access token: your HA profile →
+Security) in `.env`. Leave either empty to disable the integration.
+
+Declare each device Jarvis should drive in `automation.devices` with type
+`home_assistant`. The `id` is the name used by `scenes.json`, rules and voice
+commands; scenes keep using the same actions (`power_on`, `set_brightness`,
+`set_position`, `set_input`, `set_scene`, …), which are translated to HA
+services from the entity's domain:
+
+```json
+{"type": "home_assistant", "id": "living_room_lights", "entity_id": "light.salon",
+ "scenes": {"movie": "scene.salon_cinema", "default": "scene.salon_normal"}},
+{"type": "home_assistant", "id": "living_room_blinds", "entity_id": "cover.salon"},
+{"type": "home_assistant", "id": "living_room_tv", "entity_id": "media_player.tv_salon",
+ "inputs": {"hdmi1": "HDMI 1", "hdmi2": "HDMI 2"},
+ "actions": {"set_game_mode": {"service": "switch.turn_on",
+                               "target": {"entity_id": "switch.tv_salon_game_mode"}}}}
+```
+
+`config/jarvis_config.json` ships one device per `id` used by `scenes.json`
+and the rules, with placeholder entity ids — replace them with yours. Devices
+are only available when Home Assistant is configured.
+`actions` maps any action to an explicit service call (`value_key` passes the
+action's value as a service field). Locks and alarm panels only accept such
+explicit `actions`, never the generic on/off/toggle mapping.
+
+### Frigate
+
+Set `MQTT_HOST` (plus `MQTT_USERNAME` / `MQTT_PASSWORD`) to the broker Frigate
+publishes to; leave it empty to disable. `FRIGATE_URL` is optional and only
+used to build snapshot links. If you changed Frigate's `mqtt.topic_prefix`,
+change `frigate.topic_prefix` in `jarvis_config.json` to match. Face and plate
+recognition need Frigate 0.16+ with `face_recognition` / `lpr` enabled.
+
+Occupancy rules in `config/automation_rules.json` are bound to a Frigate
+camera or zone name with `area` (and optionally `label`, default `person`).
+They fire when a count crosses the threshold, not on every update:
+
+```json
+{"name": "Lights off when the living room empties", "area": "living_room",
+ "conditions": {"max_occupancy": 0},
+ "actions": [{"device_id": "living_room_lights", "type": "power_off"}]}
+```
+
+Rename `living_room` in the shipped rules to your own Frigate zone or camera.
+
+### Conversation (local LLM)
+
+The conversation component needs an [Ollama](https://ollama.com) server
+running locally (it is optional: if Ollama is unreachable Jarvis still starts,
+canned answers keep working and an apology is spoken for other questions).
+
+```bash
+ollama pull qwen2.5:3b     # text model
+ollama pull llava:7b       # optional: describes the camera frame
+```
+
+Settings live in the `conversation` section of `config/jarvis_config.json`:
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `enabled` | `true` | Turn the component off entirely |
+| `assistant_name` / `owner_name` | `Jarvis` / `null` | Names used in prompts; the owner is greeted personally when their face is recognised or name spoken |
+| `language` | `fr` | `fr` or `en` — prompt, canned answers, fallback messages |
+| `wake_word` / `require_wake_word` | `jarvis` / `true` | Only answer utterances that contain the wake word |
+| `history_size` | `6` | Exchanges kept as chat context |
+| `llm.model` / `llm.vision_model` | `qwen2.5:3b` / `null` | Ollama models (set `vision_model` to `null` to skip frame description) |
+| `llm.base_url`, `temperature`, `max_tokens`, `timeout`, `auto_pull` | | Ollama connection and generation options |
+
+#### Web search
+
+Questions that look time-sensitive (*actualités, météo, prix, cours, résultats,
+"cherche sur internet"…*, or a year such as 2026) are searched on the web and the
+top results are given to the LLM, which summarises them; the source URLs are
+returned by `/api/chat` as `last_sources`. Search answers are never cached.
+
+- **Google Custom Search** is used when `GOOGLE_API_KEY` and `GOOGLE_CSE_ID` are
+  set in `.env` (create an engine at <https://programmablesearchengine.google.com/>).
+- Otherwise, or if Google fails, **DuckDuckGo** is used (no key, needs the
+  `ddgs` package from `requirements.txt`).
+- With neither available, search is skipped and the LLM answers alone.
+
+Options under `conversation.web_search`: `enabled`, `provider`
+(`auto` | `google` | `duckduckgo`), `max_results` (3), `fetch_content` (false —
+also download and extract each result page; richer but slower), `timeout`,
+`region` (`fr-fr`), `time_limit` (`d` | `w` | `m` | `y`).
+
+`audio.language` (default `fr` in the shipped config) sets the language Whisper
+transcribes; keep it in line with `conversation.language`.
+
+#### House questions
+
+When Frigate or Home Assistant is configured, questions such as *« qui est à
+la maison ? »*, *« qui est passé aujourd'hui ? »*, *« quelle voiture est dans
+l'allée ? »* or any question naming a known person, plate or Frigate area are
+answered from the Awareness snapshot plus the recent `awareness_events`
+history (the history of that person/plate/area when one is named). These
+questions never trigger a web search and are never cached. The webcam scene
+(*« qu'est-ce que tu vois ? »*) is separate: it describes what the computer's
+camera sees.
+
+### Microphone and speakers
+
+Jarvis listens on the **macOS default input device** (System Settings → Sound
+→ Input) and speaks on the default output, unless `.env` says otherwise:
+
+```bash
+python scripts/list_audio_devices.py      # lists microphones and speakers
+```
+
+```dotenv
+AUDIO_INPUT_DEVICE=Blue Yeti        # an index, or part of the device name
+AUDIO_OUTPUT_DEVICE=                # blank = system default
+```
+
+The chosen devices are logged at startup (`Microphone: …`, `Speakers: …`).
+Note that macOS switches the default input to AirPods when they connect; name
+the device explicitly to avoid that. Conversation only answers utterances
+containing the wake word (`jarvis`) and ignores the microphone while it is
+speaking, so it doesn't answer itself.
 
 ### Authentication
 
@@ -152,14 +323,18 @@ curl -X POST http://localhost:8000/token \
 
 | Method | Path                              | Auth | Description               |
 |--------|-----------------------------------|------|---------------------------|
-| GET    | `/api/status`                     | no   | System status            |
-| GET    | `/api/components`                 | no   | Component health         |
-| POST   | `/api/command`                    | no   | Send a command           |
-| GET    | `/api/scenes`                     | no   | List / active scene      |
-| POST   | `/api/scenes/{name}/activate`     | no   | Activate a scene         |
-| GET    | `/api/devices`                    | no   | Device states            |
+| GET    | `/api/status`                     | yes  | System status            |
+| GET    | `/api/components`                 | yes  | Component health         |
+| POST   | `/api/command`                    | yes  | Send a command           |
+| GET    | `/api/scenes`                     | yes  | List / active scene      |
+| POST   | `/api/scenes/{name}/activate`     | yes  | Activate a scene         |
+| GET    | `/api/devices`                    | yes  | Device states            |
+| GET    | `/api/awareness`                  | yes  | Who/what is where        |
+| GET    | `/api/awareness/history`          | yes  | Recent identifications (`?subject=Alice`) |
 | GET    | `/api/metrics`                    | yes  | System/component metrics |
 | POST   | `/api/backup`                     | yes  | Create a backup          |
+| POST   | `/api/chat`                       | yes  | Ask the assistant (`{"text": "...", "speak": false}`) |
+| DELETE | `/api/chat/history`               | yes  | Reset conversation memory |
 | WS     | `/ws`                             | yes  | Live state + metrics     |
 
 ---
@@ -178,8 +353,10 @@ pylint jarvis       # lint
 
 - The PyQt desktop GUI (`jarvis_gui.py`) is experimental. The component
   accessors it needs now exist, but it hasn't been fully validated end-to-end.
-- `config/scenes.json` references a `blinds` device type that has no controller
-  yet; those actions are skipped gracefully at runtime.
+- The Home Assistant and Frigate integrations are covered by tests against a
+  simulated HA WebSocket server and an MQTT broker, not yet against a live
+  installation. Scene actions with no Home Assistant equivalent (e.g.
+  `set_picture_mode`) need an `actions` override per device.
 - The vision/audio stacks require host hardware (camera, microphone, and ideally
   a GPU/Apple Silicon), so they don't run in the base Docker image.
 

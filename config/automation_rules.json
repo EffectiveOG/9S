@@ -2,6 +2,8 @@
     "occupancy_rules": [
         {
             "name": "Turn off lights when room empty",
+            "area": "living_room",
+            "label": "person",
             "conditions": {
                 "max_occupancy": 0
             },
@@ -14,13 +16,15 @@
         },
         {
             "name": "Movie mode when multiple people",
+            "area": "living_room",
+            "label": "person",
             "conditions": {
                 "min_occupancy": 2
             },
             "actions": [
                 {
                     "device_id": "living_room_lights",
-                    "type": "set",
+                    "type": "set_scene",
                     "value": "movie"
                 },
                 {

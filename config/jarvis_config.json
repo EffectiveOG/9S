@@ -28,7 +28,7 @@
         "rotation": 0,           
         "preview_scale": 1.0,    
         "frame_skip": 2,
-        "detect_objects": true,
+        "detect_objects": false,
         "detect_faces": true,
         "detect_gestures": true,
         "object_confidence": 0.25,
@@ -46,6 +46,9 @@
         }
     },
     "audio": {
+        "input_device": "${AUDIO_INPUT_DEVICE}",
+        "output_device": "${AUDIO_OUTPUT_DEVICE}",
+        "language": "fr",
         "sample_rate": 16000,
         "whisper_model": "base",
         "device": "cpu",
@@ -89,6 +92,35 @@
             "ttl_minutes": 60
         }
     },
+    "conversation": {
+        "enabled": true,
+        "assistant_name": "Jarvis",
+        "owner_name": "Viny",
+        "language": "fr",
+        "wake_word": "jarvis",
+        "require_wake_word": true,
+        "history_size": 6,
+        "cache_size": 200,
+        "speech_cooldown": 1.0,
+        "llm": {
+            "base_url": "http://localhost:11434",
+            "model": "qwen2.5:3b",
+            "vision_model": "llava:7b",
+            "temperature": 0.7,
+            "max_tokens": 200,
+            "timeout": 60,
+            "auto_pull": false
+        },
+        "web_search": {
+            "enabled": true,
+            "provider": "auto",
+            "max_results": 3,
+            "fetch_content": false,
+            "timeout": 10,
+            "region": "fr-fr",
+            "time_limit": "m"
+        }
+    },
     "automation": {
         "scenes_file": "config/scenes.json",
         "default_timeout": 30,
@@ -101,136 +133,55 @@
         },
         "devices": [
             {
-                "type": "tv",
+                "type": "home_assistant",
                 "id": "living_room_tv",
-                "ip_address": "192.168.1.100",
-                "mac_address": "XX:XX:XX:XX:XX:XX",  
-                "hdmi_mapping": {
-                    "ps5": 1,
-                    "xbox": 2,
-                    "tv": 3
-                },
-                "features": {
-                    "hdmi_cec": true,
-                    "wake_on_lan": true,
-                    "auto_power_off": true
-                },
-                "power_management": {
-                    "startup_delay": 5,
-                    "shutdown_delay": 3,
-                    "eco_mode_hours": ["23:00-06:00"]
+                "entity_id": "media_player.living_room_tv",
+                "inputs": {
+                    "hdmi1": "HDMI 1",
+                    "hdmi2": "HDMI 2",
+                    "hdmi3": "HDMI 3"
                 }
             },
             {
-                "type": "light",
+                "type": "home_assistant",
                 "id": "living_room_lights",
-                "bridge_ip": "192.168.1.200",
-                "api_key": "${HUE_API_KEY}",
-                "backup_api_key": "${HUE_BACKUP_API_KEY}",
+                "entity_id": "light.living_room",
                 "scenes": {
-                    "gaming": {
-                        "brightness": 70,
-                        "color_temp": 4000,
-                        "dynamic": true
-                    },
-                    "gaming_intense": {
-                        "brightness": 30,
-                        "color_temp": 2700,
-                        "dynamic": true
-                    }
-                },
-                "auto_brightness": {
-                    "enabled": true,
-                    "min": 10,
-                    "max": 100
+                    "default": "scene.living_room_default",
+                    "movie": "scene.living_room_movie",
+                    "relaxing": "scene.living_room_relaxing",
+                    "gaming": "scene.living_room_gaming",
+                    "gaming_intense": "scene.living_room_gaming_intense"
                 }
             },
             {
-                "type": "blinds",
+                "type": "home_assistant",
                 "id": "living_room_blinds",
-                "ip_address": "",
-                "port": 80
+                "entity_id": "cover.living_room"
             },
             {
-                "type": "game_console",
+                "type": "home_assistant",
+                "id": "bedroom_lights",
+                "entity_id": "light.bedroom",
+                "scenes": {
+                    "energizing": "scene.bedroom_energizing",
+                    "relaxing": "scene.bedroom_relaxing"
+                }
+            },
+            {
+                "type": "home_assistant",
+                "id": "kitchen_lights",
+                "entity_id": "light.kitchen"
+            },
+            {
+                "type": "home_assistant",
                 "id": "ps5_console",
-                "console_type": "ps5",
-                "ip_address": "192.168.1.150",
-                "mac_address": "XX:XX:XX:XX:XX:XX",
-                "hdmi_port": 1,
-                "auto_retry": true,
-                "discovery_timeout": 5.0,
-                "power_management": {
-                    "auto_standby_minutes": 30,
-                    "keep_alive": true
-                },
-                "credentials": {
-                    "psn_id": "${PSN_ID}",
-                    "access_token": "${PSN_ACCESS_TOKEN}",
-                    "refresh_token": "${PSN_REFRESH_TOKEN}",
-                    "token_expiry": "2024-12-31T23:59:59Z"
-                },
-                "favorite_games": [
-                    {
-                        "name": "God of War Ragnarök",
-                        "id": "PPSA01412_00",
-                        "quick_scene": "gaming_intense",
-                        "auto_hdr": true,
-                        "game_presets": {
-                            "performance_mode": true,
-                            "low_latency": true
-                        }
-                    },
-                    {
-                        "name": "Spider-Man 2",
-                        "id": "PPSA01411_00",
-                        "quick_scene": "gaming_standard",
-                        "auto_hdr": true,
-                        "game_presets": {
-                            "ray_tracing": true,
-                            "performance_mode": false
-                        }
-                    }
-                ]
+                "entity_id": "media_player.ps5"
             },
             {
-                "type": "game_console",
+                "type": "home_assistant",
                 "id": "xbox_console",
-                "console_type": "xbox",
-                "ip_address": "192.168.1.151",
-                "mac_address": "YY:YY:YY:YY:YY:YY",
-                "hdmi_port": 2,
-                "auto_retry": true,
-                "discovery_timeout": 5.0,
-                "power_management": {
-                    "auto_standby_minutes": 30,
-                    "keep_alive": true
-                },
-                "credentials": {
-                    "xbox_live_token": "${XBOX_LIVE_TOKEN}",
-                    "refresh_token": "${XBOX_REFRESH_TOKEN}",
-                    "token_expiry": "2024-12-31T23:59:59Z"
-                },
-                "favorite_games": [
-                    {
-                        "name": "Halo Infinite",
-                        "id": "1240440027",
-                        "quick_scene": "gaming_intense",
-                        "game_presets": {
-                            "performance_mode": true,
-                            "low_latency": true
-                        }
-                    },
-                    {
-                        "name": "Forza Horizon 5",
-                        "id": "1240440025",
-                        "quick_scene": "gaming_standard",
-                        "game_presets": {
-                            "quality_mode": true,
-                            "ray_tracing": true
-                        }
-                    }
-                ]
+                "entity_id": "media_player.xbox"
             }
         ],
         "error_handling": {
@@ -247,6 +198,27 @@
             "methods": ["console", "system"],
             "levels": ["error", "warning", "info"]
         }
+    },
+    "home_assistant": {
+        "url": "${HA_URL}",
+        "token": "${HA_TOKEN}",
+        "reconnect_delay": 5,
+        "request_timeout": 10
+    },
+    "frigate": {
+        "mqtt": {
+            "host": "${MQTT_HOST}",
+            "port": 1883,
+            "username": "${MQTT_USERNAME}",
+            "password": "${MQTT_PASSWORD}",
+            "client_id": "jarvis"
+        },
+        "topic_prefix": "frigate",
+        "api_url": "${FRIGATE_URL}"
+    },
+    "awareness": {
+        "ha_entities": ["person.*"],
+        "max_tracked": 500
     },
     "system": {
         "logging": {

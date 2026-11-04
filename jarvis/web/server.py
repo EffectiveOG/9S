@@ -210,6 +210,34 @@ async def send_command(command: Dict[str, Any],
     await jarvis.command_queue.put(command)
     return {"status": "success", "message": "Command sent"}
 
+@app.post("/api/chat")
+async def chat(payload: Dict[str, Any],
+               current_user: Dict = Depends(security.get_current_user)):
+    """Ask the conversation component a question.
+
+    Body: {"text": "...", "speak": false}. Returns the assistant's answer.
+    """
+    conversation = jarvis.components.get("conversation") if jarvis else None
+    if conversation is None or not conversation.is_running:
+        raise HTTPException(status_code=503, detail="Conversation component not available")
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="'text' is required")
+    if len(text) > 2000:
+        raise HTTPException(status_code=413, detail="'text' is too long (max 2000 chars)")
+    answer = await conversation.respond(text, speak=bool(payload.get("speak", False)))
+    return {"response": answer, **{k: conversation.state.get(k)
+                                   for k in ("last_source", "last_latency", "last_sources")}}
+
+@app.delete("/api/chat/history")
+async def clear_chat_history(current_user: Dict = Depends(security.get_current_user)):
+    """Forget the conversation history and response cache."""
+    conversation = jarvis.components.get("conversation") if jarvis else None
+    if conversation is None:
+        raise HTTPException(status_code=503, detail="Conversation component not available")
+    conversation.clear_history()
+    return {"status": "success"}
+
 @app.get("/api/scenes")
 async def get_scenes(current_user: Dict = Depends(security.get_current_user)):
     """Get available scenes."""
@@ -241,6 +269,22 @@ async def get_devices(current_user: Dict = Depends(security.get_current_user)):
         device_id: await controller.get_state()
         for device_id, controller in automation.controllers.items()
     }
+
+@app.get("/api/awareness")
+async def get_awareness(current_user: Dict = Depends(security.get_current_user)):
+    """Who/what is where: Frigate areas, tracked objects, people, vehicles, HA presence."""
+    if not jarvis or "awareness" not in jarvis.components:
+        raise HTTPException(status_code=503, detail="Awareness not available")
+    return jarvis.components["awareness"].snapshot()
+
+@app.get("/api/awareness/history")
+async def get_awareness_history(subject: str = None, limit: int = 50,
+                                current_user: Dict = Depends(security.get_current_user)):
+    """Recent awareness events, optionally for one person, plate or area."""
+    if not jarvis or "memory" not in jarvis.components:
+        raise HTTPException(status_code=503, detail="Memory not available")
+    limit = max(1, min(limit, 500))
+    return await jarvis.components["memory"].get_awareness_history(subject, limit)
 
 async def broadcast_state():
     """Broadcast system state to all connected clients."""
