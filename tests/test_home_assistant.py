@@ -1,7 +1,6 @@
 import asyncio
 
 from jarvis.components.automation.automation_component import AutomationComponent
-from jarvis.components.automation.controllers.blinds_controller import BlindsController
 from jarvis.components.automation.controllers.home_assistant_controller import HomeAssistantController
 from jarvis.integrations.home_assistant import (
     HomeAssistantClient, build_home_assistant_client, is_configured, websocket_url,
@@ -173,15 +172,27 @@ async def test_controller_state_from_cache():
     assert (await missing.get_state())["available"] is False
 
 
-def test_home_assistant_device_overrides_direct_controller():
+def test_automation_builds_home_assistant_devices_only():
     devices = [
-        {"type": "blinds", "id": "living_room_blinds"},
         {"type": "home_assistant", "id": "living_room_blinds", "entity_id": "cover.salon"},
+        {"type": "tv", "id": "old_tv", "ip_address": "192.168.1.100"},  # legacy type: ignored
     ]
-    with_ha = AutomationComponent({"devices": devices, "scenes_file": "config/scenes.json"},
-                                  ha_client=RecordingClient())
-    assert isinstance(with_ha.controllers["living_room_blinds"], HomeAssistantController)
+    auto = AutomationComponent({"devices": devices, "scenes_file": "config/scenes.json"},
+                               ha_client=RecordingClient())
+    assert list(auto.controllers) == ["living_room_blinds"]
+    assert isinstance(auto.controllers["living_room_blinds"], HomeAssistantController)
 
-    # Without Home Assistant the direct controller remains as a fallback.
+    # Without Home Assistant no device is available.
     without_ha = AutomationComponent({"devices": devices, "scenes_file": "config/scenes.json"})
-    assert isinstance(without_ha.controllers["living_room_blinds"], BlindsController)
+    assert without_ha.controllers == {}
+
+
+async def test_shipped_config_drives_every_scene_device():
+    import json
+
+    with open("config/jarvis_config.json") as f:
+        automation = json.load(f)["automation"]
+    auto = AutomationComponent(automation, ha_client=RecordingClient())
+    assert all(isinstance(c, HomeAssistantController) for c in auto.controllers.values())
+    scene_devices = {d for scene in auto.scene_manager.scenes.values() for d in scene["devices"]}
+    assert scene_devices <= set(auto.controllers)

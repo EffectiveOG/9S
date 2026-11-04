@@ -46,9 +46,9 @@ jarvis/
 │   │       ├── automation_component.py
 │   │       └── controllers/
 │   │           ├── __init__.py
-│   │           ├── tv_controller.py
-│   │           ├── light_controller.py
-│   │           └── game_console_controller.py
+│   │           ├── base_controller.py
+│   │           ├── home_assistant_controller.py
+│   │           └── scene_manager.py
 │   ├── utils/
 │   │   ├── __init__.py
 │   │   ├── async_utils.py      # Async helper functions

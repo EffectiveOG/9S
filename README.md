@@ -34,9 +34,8 @@ Jarvis builds on the ones already running in the house:
 - **Memory** — detections and events persisted to a local SQLite database with
   automatic retention/cleanup.
 - **Automation** — scene orchestration and device control driven by voice
-  commands, gestures, and per-zone occupancy rules. Devices are Home Assistant
-  entities; the older direct controllers (TV, Hue / LIFX, PS5 / Xbox, blinds)
-  remain as a fallback.
+  commands, gestures, and per-zone occupancy rules. Every device is a Home
+  Assistant entity: Jarvis has no device-specific code of its own.
 - **Web dashboard** — FastAPI + WebSocket interface for status, metrics, scene
   control, and backups, protected by JWT authentication.
 
@@ -143,7 +142,7 @@ Two layers of configuration:
   automation devices, scenes, performance limits). `config/scenes.json` and
   `config/automation_rules.json` define scenes and occupancy rules.
 
-> **Do not commit real device tokens or API keys** (Hue keys, PSN/Xbox tokens)
+> **Do not commit real device tokens or API keys** (Home Assistant token, MQTT password)
 > into `config/jarvis_config.json`. Keep secrets in `.env`.
 
 ### Home Assistant
@@ -167,8 +166,9 @@ services from the entity's domain:
                                "target": {"entity_id": "switch.tv_salon_game_mode"}}}}
 ```
 
-A `home_assistant` device with the same `id` as a direct controller replaces
-it; if Home Assistant isn't configured, the direct controller is used instead.
+`config/jarvis_config.json` ships one device per `id` used by `scenes.json`
+and the rules, with placeholder entity ids — replace them with yours. Devices
+are only available when Home Assistant is configured.
 `actions` maps any action to an explicit service call (`value_key` passes the
 action's value as a service field). Locks and alarm panels only accept such
 explicit `actions`, never the generic on/off/toggle mapping.

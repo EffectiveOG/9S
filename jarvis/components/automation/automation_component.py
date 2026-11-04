@@ -1,6 +1,6 @@
 # jarvis/components/automation/automation_component.py
 
-from typing import Dict, Any, List, Optional, Type
+from typing import Dict, Any, List, Optional
 import asyncio
 from collections import defaultdict
 from pathlib import Path
@@ -8,10 +8,6 @@ import json
 from ...core.base_component import BaseComponent
 from ...core.message import Message
 from .controllers.base_controller import BaseController
-from .controllers.tv_controller import TVController
-from .controllers.light_controller import LightController
-from .controllers.game_console_controller import GameConsoleController
-from .controllers.blinds_controller import BlindsController
 from .controllers.home_assistant_controller import HomeAssistantController
 from .controllers.scene_manager import SceneManager
 from ...utils.logging_utils import get_logger
@@ -31,8 +27,8 @@ class AutomationComponent(BaseComponent):
                 - rules_file: Path to automation rules file
                 - command_timeout: Timeout for device commands (seconds)
                 - retry_attempts: Number of retry attempts for failed commands
-            ha_client: Optional HomeAssistantClient backing devices of type
-                "home_assistant"
+            ha_client: HomeAssistantClient that drives every device (None
+                if Home Assistant isn't configured: no device is available)
         """
         super().__init__("automation")
         self.config = config
@@ -77,42 +73,21 @@ class AutomationComponent(BaseComponent):
             return {}
     
     def _init_controllers(self):
-        """Initialize device controllers based on configuration."""
-        controller_map = {
-            'tv': TVController,
-            'light': LightController,
-            'game_console': GameConsoleController,
-            'blinds': BlindsController,
-        }
-        
-        for device_config in self.config.get("devices", []):
-            device_type = device_config.get("type")
-            device_id = device_config.get("id")
-            
-            if device_type == "home_assistant":
-                continue  # second pass: Home Assistant devices take precedence
+        """Create a Home Assistant controller for each configured device."""
+        devices = self.config.get("devices", [])
+        if devices and self.ha_client is None:
+            logger.warning("Home Assistant not configured (set HA_URL and HA_TOKEN); "
+                           f"{len(devices)} device(s) unavailable")
+            return
 
-            if device_type in controller_map:
-                try:
-                    controller = controller_map[device_type](device_config)
-                    self.controllers[device_id] = controller
-                    logger.info(f"Initialized {device_type} controller for {device_id}")
-                except Exception as e:
-                    logger.error(f"Error initializing {device_type} controller: {e}")
-
-        # Home Assistant devices replace a direct controller with the same id;
-        # if Home Assistant isn't configured, the direct controller stays as a
-        # fallback.
-        for device_config in self.config.get("devices", []):
-            if device_config.get("type") != "home_assistant":
-                continue
+        for device_config in devices:
             device_id = device_config.get("id")
-            if self.ha_client is None:
-                logger.warning(f"Home Assistant not configured; skipping device {device_id}")
+            device_type = device_config.get("type", "home_assistant")
+            if device_type != "home_assistant":
+                logger.warning(f"Unsupported device type '{device_type}' for {device_id}; "
+                               "declare it in Home Assistant and use type 'home_assistant'")
                 continue
             try:
-                if device_id in self.controllers:
-                    logger.info(f"{device_id}: using Home Assistant instead of direct controller")
                 self.controllers[device_id] = HomeAssistantController(device_config, self.ha_client)
                 logger.info(f"Initialized Home Assistant controller for {device_id} "
                             f"({device_config.get('entity_id')})")
