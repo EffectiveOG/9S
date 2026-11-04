@@ -26,7 +26,8 @@ fastapi==0.104.1
 uvicorn==0.24.0
 python-multipart==0.0.6
 websockets==11.0.3
-aiohttp==3.9.1              # used by automation device controllers
+aiohttp==3.9.1              # device controllers + Home Assistant WebSocket client
+aiomqtt>=2.0,<3             # Frigate events over MQTT (Mosquitto)
 
 # Auth (web/security.py)
 python-jose[cryptography]==3.3.0

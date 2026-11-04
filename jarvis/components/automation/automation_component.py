@@ -12,6 +12,7 @@ from .controllers.tv_controller import TVController
 from .controllers.light_controller import LightController
 from .controllers.game_console_controller import GameConsoleController
 from .controllers.blinds_controller import BlindsController
+from .controllers.home_assistant_controller import HomeAssistantController
 from .controllers.scene_manager import SceneManager
 from ...utils.logging_utils import get_logger
 
@@ -20,7 +21,7 @@ logger = get_logger(__name__)
 class AutomationComponent(BaseComponent):
     """Main automation component handling device control and automation."""
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], ha_client=None):
         """
         Initialize automation component.
         
@@ -30,9 +31,12 @@ class AutomationComponent(BaseComponent):
                 - rules_file: Path to automation rules file
                 - command_timeout: Timeout for device commands (seconds)
                 - retry_attempts: Number of retry attempts for failed commands
+            ha_client: Optional HomeAssistantClient backing devices of type
+                "home_assistant"
         """
         super().__init__("automation")
         self.config = config
+        self.ha_client = ha_client
         
         # Command configuration
         self.command_timeout = config.get("command_timeout", 5.0)
@@ -85,6 +89,9 @@ class AutomationComponent(BaseComponent):
             device_type = device_config.get("type")
             device_id = device_config.get("id")
             
+            if device_type == "home_assistant":
+                continue  # second pass: Home Assistant devices take precedence
+
             if device_type in controller_map:
                 try:
                     controller = controller_map[device_type](device_config)
@@ -92,6 +99,25 @@ class AutomationComponent(BaseComponent):
                     logger.info(f"Initialized {device_type} controller for {device_id}")
                 except Exception as e:
                     logger.error(f"Error initializing {device_type} controller: {e}")
+
+        # Home Assistant devices replace a direct controller with the same id;
+        # if Home Assistant isn't configured, the direct controller stays as a
+        # fallback.
+        for device_config in self.config.get("devices", []):
+            if device_config.get("type") != "home_assistant":
+                continue
+            device_id = device_config.get("id")
+            if self.ha_client is None:
+                logger.warning(f"Home Assistant not configured; skipping device {device_id}")
+                continue
+            try:
+                if device_id in self.controllers:
+                    logger.info(f"{device_id}: using Home Assistant instead of direct controller")
+                self.controllers[device_id] = HomeAssistantController(device_config, self.ha_client)
+                logger.info(f"Initialized Home Assistant controller for {device_id} "
+                            f"({device_config.get('entity_id')})")
+            except Exception as e:
+                logger.error(f"Error initializing Home Assistant device {device_id}: {e}")
     
     async def start(self):
         """Start automation component and controllers."""
@@ -133,6 +159,8 @@ class AutomationComponent(BaseComponent):
             await self._handle_vision_update(message.data)
         elif message.message_type == "speech_recognized":
             await self._handle_speech_command(message.data)
+        elif message.message_type == "presence_update":
+            await self._check_area_rules(message.data)
     
     async def _handle_vision_update(self, vision_data: Dict[str, Any]):
         """Process vision updates for automation triggers."""
@@ -298,14 +326,38 @@ class AutomationComponent(BaseComponent):
         # Count people in scene
         person_count = sum(1 for obj in objects if obj["class"] == "person")
         
-        # Check occupancy rules
+        # Check occupancy rules (rules bound to a Frigate area are handled by
+        # _check_area_rules instead)
         for rule in self.rules.get("occupancy_rules", []):
+            if "area" in rule:
+                continue
             conditions = rule.get("conditions", {})
             if "min_occupancy" in conditions and person_count >= conditions["min_occupancy"]:
                 await self._execute_rule_actions(rule["actions"])
             elif "max_occupancy" in conditions and person_count <= conditions["max_occupancy"]:
                 await self._execute_rule_actions(rule["actions"])
     
+    async def _check_area_rules(self, presence: Dict[str, Any]):
+        """Run occupancy rules bound to a Frigate camera/zone ("area").
+
+        Rules fire when a count *crosses* their threshold (e.g. 1 -> 0 for
+        max_occupancy 0), not on every update while the condition holds.
+        """
+        count = presence.get("count", 0)
+        previous = presence.get("previous")
+        for rule in self.rules.get("occupancy_rules", []):
+            if rule.get("area") != presence.get("area"):
+                continue
+            if rule.get("label", "person") != presence.get("label"):
+                continue
+            conditions = rule.get("conditions", {})
+            low, high = conditions.get("min_occupancy"), conditions.get("max_occupancy")
+            crossed_up = low is not None and count >= low and (previous is None or previous < low)
+            crossed_down = high is not None and count <= high and (previous is None or previous > high)
+            if crossed_up or crossed_down:
+                logger.info(f"Rule triggered: {rule.get('name')} ({presence['area']}={count})")
+                await self._execute_rule_actions(rule["actions"])
+
     async def _execute_rule_actions(self, actions: List[Dict[str, Any]]):
         """Execute automation rule actions."""
         for action in actions:

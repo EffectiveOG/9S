@@ -242,6 +242,22 @@ async def get_devices(current_user: Dict = Depends(security.get_current_user)):
         for device_id, controller in automation.controllers.items()
     }
 
+@app.get("/api/awareness")
+async def get_awareness(current_user: Dict = Depends(security.get_current_user)):
+    """Who/what is where: Frigate areas, tracked objects, people, vehicles, HA presence."""
+    if not jarvis or "awareness" not in jarvis.components:
+        raise HTTPException(status_code=503, detail="Awareness not available")
+    return jarvis.components["awareness"].snapshot()
+
+@app.get("/api/awareness/history")
+async def get_awareness_history(subject: str = None, limit: int = 50,
+                                current_user: Dict = Depends(security.get_current_user)):
+    """Recent awareness events, optionally for one person, plate or area."""
+    if not jarvis or "memory" not in jarvis.components:
+        raise HTTPException(status_code=503, detail="Memory not available")
+    limit = max(1, min(limit, 500))
+    return await jarvis.components["memory"].get_awareness_history(subject, limit)
+
 async def broadcast_state():
     """Broadcast system state to all connected clients."""
     while True:

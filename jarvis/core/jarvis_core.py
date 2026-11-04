@@ -13,6 +13,8 @@ from ..components.vision.vision_component import VisionComponent
 from ..components.audio.audio_component import AudioComponent
 from ..components.memory.memory_component import MemoryComponent
 from ..components.automation.automation_component import AutomationComponent
+from ..components.awareness.awareness_component import AwarenessComponent
+from ..integrations.home_assistant import build_home_assistant_client
 from ..utils.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -50,6 +52,9 @@ class JarvisCore:
         # Background tasks (processing loops + message-bus pumps)
         self._loop_tasks: List[asyncio.Task] = []
         self._pump_tasks: List[asyncio.Task] = []
+
+        # Shared Home Assistant connection (None if HA_URL/HA_TOKEN unset)
+        self.ha_client = None
     
     def _load_config(self) -> Dict[str, Any]:
         """Load main configuration file."""
@@ -135,12 +140,22 @@ class JarvisCore:
                 await component.stop()
             except Exception as e:
                 logger.error(f"Error stopping component {component.name}: {e}")
+
+        if self.ha_client is not None:
+            await self.ha_client.stop()
+            self.ha_client = None
         
         logger.info("Jarvis stopped")
     
     async def _init_components(self):
         """Initialize and start all components."""
-        # Initialize vision component
+        # Home Assistant: one connection shared by automation (actions) and
+        # awareness (presence entities)
+        self.ha_client = build_home_assistant_client(self.config.get("home_assistant", {}))
+        if self.ha_client is not None:
+            await self.ha_client.start()
+
+        # Initialize vision component (local webcam: gestures, operator face)
         self.components["vision"] = VisionComponent(
             self.config.get("vision", {})
         )
@@ -157,7 +172,13 @@ class JarvisCore:
         
         # Initialize automation component
         self.components["automation"] = AutomationComponent(
-            self.config.get("automation", {})
+            self.config.get("automation", {}), ha_client=self.ha_client
+        )
+
+        # Initialize awareness component (Frigate camera network + HA presence)
+        self.components["awareness"] = AwarenessComponent(
+            {**self.config.get("awareness", {}), "frigate": self.config.get("frigate", {})},
+            ha_client=self.ha_client,
         )
         
         # Start all components
@@ -169,21 +190,21 @@ class JarvisCore:
             except Exception as e:
                 logger.error(f"Error starting component {name}: {e}")
 
-        # Connect producers (vision/audio) to consumers (memory/automation/core)
+        # Connect producers (vision/audio/awareness) to consumers (memory/automation/core)
         self._wire_message_bus()
 
     def _wire_message_bus(self):
         """Route messages published by producers to interested consumers.
 
-        Producers publish Message objects to any asyncio.Queue registered in
-        their `subscribers` set. We register one queue per producer and pump
+        Producers (vision, audio, awareness) publish Message objects to any
+        asyncio.Queue registered in their `subscribers` set. We register one queue per producer and pump
         its messages to the memory + automation handlers and the core event
         queue, so detections/speech actually flow through the system.
         """
         memory = self.components.get("memory")
         automation = self.components.get("automation")
 
-        for producer_name in ("vision", "audio"):
+        for producer_name in ("vision", "audio", "awareness"):
             producer = self.components.get(producer_name)
             if producer is None:
                 continue

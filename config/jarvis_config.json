@@ -28,7 +28,7 @@
         "rotation": 0,           
         "preview_scale": 1.0,    
         "frame_skip": 2,
-        "detect_objects": true,
+        "detect_objects": false,
         "detect_faces": true,
         "detect_gestures": true,
         "object_confidence": 0.25,
@@ -247,6 +247,27 @@
             "methods": ["console", "system"],
             "levels": ["error", "warning", "info"]
         }
+    },
+    "home_assistant": {
+        "url": "${HA_URL}",
+        "token": "${HA_TOKEN}",
+        "reconnect_delay": 5,
+        "request_timeout": 10
+    },
+    "frigate": {
+        "mqtt": {
+            "host": "${MQTT_HOST}",
+            "port": 1883,
+            "username": "${MQTT_USERNAME}",
+            "password": "${MQTT_PASSWORD}",
+            "client_id": "jarvis"
+        },
+        "topic_prefix": "frigate",
+        "api_url": "${FRIGATE_URL}"
+    },
+    "awareness": {
+        "ha_entities": ["person.*"],
+        "max_tracked": 500
     },
     "system": {
         "logging": {

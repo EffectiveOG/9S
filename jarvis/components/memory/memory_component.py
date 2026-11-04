@@ -13,6 +13,15 @@ from ...utils.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
+# Awareness messages worth keeping as history, and the field naming their subject.
+_AWARENESS_SUBJECTS = {
+    "person_identified": "name",
+    "person_moved": "name",
+    "vehicle_identified": "plate",
+    "home_presence_update": "entity_id",
+    "presence_update": "area",
+}
+
 
 class MemoryComponent(BaseComponent):
     """Component for managing Jarvis's memory and data persistence.
@@ -68,6 +77,8 @@ class MemoryComponent(BaseComponent):
                 await self._store_speech_data(message.data)
             elif message.message_type == "device_update":
                 await self._store_device_data(message.data)
+            elif message.message_type in _AWARENESS_SUBJECTS:
+                await self._execute(self._store_awareness_sync, message.message_type, message.data)
         except Exception as e:
             logger.error(f"Error processing message: {e}")
 
@@ -141,7 +152,41 @@ class MemoryComponent(BaseComponent):
             logger.error(f"Error storing device data: {e}")
             self.conn.rollback()
 
+    def _store_awareness_sync(self, event_type: str, data: Dict[str, Any]):
+        try:
+            self.conn.execute(
+                "INSERT INTO awareness_events (timestamp, event_type, subject, camera, data) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (datetime.now().isoformat(), event_type,
+                 data.get(_AWARENESS_SUBJECTS[event_type]), data.get("camera"),
+                 json.dumps(data, default=str)),
+            )
+            self.conn.commit()
+        except Exception as e:
+            logger.error(f"Error storing awareness event: {e}")
+            self.conn.rollback()
+
     # ---- reads ------------------------------------------------------------
+    async def get_awareness_history(self, subject: str = None,
+                                    limit: int = 50) -> List[Dict[str, Any]]:
+        """Most recent awareness events, optionally for one person/plate/area."""
+        result = await self._execute(self._get_awareness_sync, subject, limit)
+        return result or []
+
+    def _get_awareness_sync(self, subject, limit: int) -> List[Dict[str, Any]]:
+        query = "SELECT timestamp, event_type, subject, camera, data FROM awareness_events"
+        params: list = []
+        if subject:
+            query += " WHERE subject = ?"
+            params.append(subject)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(int(limit))
+        rows = self.conn.execute(query, params).fetchall()
+        return [
+            {"timestamp": t, "event_type": e, "subject": s, "camera": c, "data": json.loads(d)}
+            for t, e, s, c, d in rows
+        ]
+
     async def get_recent_detections(self, detection_type: str,
                                     minutes: int = 5) -> List[Dict[str, Any]]:
         """Get recent detection results for 'object', 'face', or 'gesture'."""
@@ -214,7 +259,7 @@ class MemoryComponent(BaseComponent):
     def _cleanup_sync(self):
         cutoff = (datetime.now() - timedelta(days=self.retention_days)).isoformat()
         tables = ["object_detections", "face_detections", "gesture_detections",
-                  "speech_events", "device_events"]
+                  "speech_events", "device_events", "awareness_events"]
         for table in tables:
             try:
                 self.conn.execute(f"DELETE FROM {table} WHERE timestamp < ?", (cutoff,))

@@ -84,3 +84,25 @@ def test_parse_speech_command():
         "type": "system_control", "data": {"action": "restart"}
     }
     assert core._parse_speech_command("what's the weather") is None
+
+
+async def test_awareness_is_wired_as_producer():
+    core = JarvisCore("config/does_not_exist.json")
+    awareness = _Producer("awareness")
+    automation = _Consumer("automation")
+
+    async def fake_init():
+        core.components.update({"awareness": awareness, "automation": automation})
+        for name, comp in core.components.items():
+            await comp.start()
+            core.initialized_components.add(name)
+        core._wire_message_bus()
+
+    core._init_components = fake_init
+    await asyncio.wait_for(core.start(), timeout=5)
+
+    await awareness.publish(Message("awareness", "presence_update",
+                                    {"area": "salon", "label": "person", "count": 1, "previous": 0}))
+    await asyncio.sleep(0.2)
+    assert [m.message_type for m in automation.received] == ["presence_update"]
+    await core.stop()

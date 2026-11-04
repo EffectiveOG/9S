@@ -41,6 +41,15 @@ def create_tables(conn):
             state TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS awareness_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            subject TEXT,
+            camera TEXT,
+            data TEXT
+        );
+
         CREATE INDEX IF NOT EXISTS idx_object_timestamp
         ON object_detections(timestamp);
 
@@ -55,4 +64,10 @@ def create_tables(conn):
 
         CREATE INDEX IF NOT EXISTS idx_device_timestamp
         ON device_events(timestamp);
+
+        CREATE INDEX IF NOT EXISTS idx_awareness_timestamp
+        ON awareness_events(timestamp);
+
+        CREATE INDEX IF NOT EXISTS idx_awareness_subject
+        ON awareness_events(subject, timestamp);
     """)
