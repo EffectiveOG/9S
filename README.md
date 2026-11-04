@@ -36,6 +36,12 @@ Jarvis builds on the ones already running in the house:
 - **Automation** — scene orchestration and device control driven by voice
   commands, gestures, and per-zone occupancy rules. Every device is a Home
   Assistant entity: Jarvis has no device-specific code of its own.
+- **Conversation** — free-form spoken (or REST) Q&A with a local LLM served by
+  [Ollama](https://ollama.com) (default `qwen2.5:3b`), aware of what the camera
+  sees and of who is in front of it; an optional multimodal model (`llava`)
+  describes the live frame. Questions needing fresh information (news,
+  weather, prices…) trigger a web search (Google Custom Search, DuckDuckGo
+  fallback) whose results ground the answer. Ported from the Ciel project.
 - **Web dashboard** — FastAPI + WebSocket interface for status, metrics, scene
   control, and backups, protected by JWT authentication.
 
@@ -48,12 +54,20 @@ Jarvis builds on the ones already running in the house:
                                                    ▼
                          ┌──────────────┐   ┌─────────────┐
   Mac webcam ──► Vision ─►  JarvisCore  ◄───┤  Awareness  │◄── HA presence
-  Microphone ──► Audio  ─►  message bus │   └─────────────┘     (person.*)
-                         └──┬────────┬──┘
-                            ▼        ▼
-                        Memory    Automation ── WebSocket ──► Home Assistant
-                        (SQLite)  (scenes, rules)             (lights, TV, covers…)
+  Microphone ──► Audio  ─►  message bus │   └──────┬──────┘     (person.*)
+                         └──┬─────┬───┬─┘          │ who/what is where
+                            ▼     ▼   ▼            ▼
+                       Memory  Automation   Conversation ── Ollama (+ web search)
+                      (SQLite)     │        (answers via TTS)
+                                   └── WebSocket ──► Home Assistant
+                                                     (lights, TV, covers…)
 ```
+
+Speech routing: an utterance containing the wake word is first matched against
+system commands (`stop`, `status`, `restart`) and scenes, then against device
+commands (automation). Anything else goes to the conversation component, which
+answers through TTS. Vision updates are also fed to the conversation component
+so questions like *« Jarvis, qu'est-ce que tu vois ? »* use the current scene.
 
 Each component subclasses `BaseComponent` and publishes `Message` objects. The
 core wires producers (vision, audio, awareness) to consumers (memory,
@@ -88,7 +102,8 @@ jarvis/
 │   ├── audio/       # AudioComponent + Whisper ASR and TTS
 │   ├── memory/      # MemoryComponent + SQLite schema
 │   ├── awareness/   # AwarenessComponent (Frigate + HA presence world model)
-│   └── automation/  # AutomationComponent, SceneManager, device controllers
+│   ├── automation/  # AutomationComponent, SceneManager, Home Assistant controller
+│   └── conversation/# ConversationComponent, async Ollama client, web search
 ├── integrations/    # Home Assistant WebSocket client, Frigate MQTT client
 ├── web/             # FastAPI server, security (JWT), metrics, backups
 └── utils/           # logging helpers
@@ -193,6 +208,50 @@ They fire when a count crosses the threshold, not on every update:
 
 Rename `living_room` in the shipped rules to your own Frigate zone or camera.
 
+### Conversation (local LLM)
+
+The conversation component needs an [Ollama](https://ollama.com) server
+running locally (it is optional: if Ollama is unreachable Jarvis still starts,
+canned answers keep working and an apology is spoken for other questions).
+
+```bash
+ollama pull qwen2.5:3b     # text model
+ollama pull llava:7b       # optional: describes the camera frame
+```
+
+Settings live in the `conversation` section of `config/jarvis_config.json`:
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `enabled` | `true` | Turn the component off entirely |
+| `assistant_name` / `owner_name` | `Jarvis` / `null` | Names used in prompts; the owner is greeted personally when their face is recognised or name spoken |
+| `language` | `fr` | `fr` or `en` — prompt, canned answers, fallback messages |
+| `wake_word` / `require_wake_word` | `jarvis` / `true` | Only answer utterances that contain the wake word |
+| `history_size` | `6` | Exchanges kept as chat context |
+| `llm.model` / `llm.vision_model` | `qwen2.5:3b` / `null` | Ollama models (set `vision_model` to `null` to skip frame description) |
+| `llm.base_url`, `temperature`, `max_tokens`, `timeout`, `auto_pull` | | Ollama connection and generation options |
+
+#### Web search
+
+Questions that look time-sensitive (*actualités, météo, prix, cours, résultats,
+"cherche sur internet"…*, or a year such as 2026) are searched on the web and the
+top results are given to the LLM, which summarises them; the source URLs are
+returned by `/api/chat` as `last_sources`. Search answers are never cached.
+
+- **Google Custom Search** is used when `GOOGLE_API_KEY` and `GOOGLE_CSE_ID` are
+  set in `.env` (create an engine at <https://programmablesearchengine.google.com/>).
+- Otherwise, or if Google fails, **DuckDuckGo** is used (no key, needs the
+  `ddgs` package from `requirements.txt`).
+- With neither available, search is skipped and the LLM answers alone.
+
+Options under `conversation.web_search`: `enabled`, `provider`
+(`auto` | `google` | `duckduckgo`), `max_results` (3), `fetch_content` (false —
+also download and extract each result page; richer but slower), `timeout`,
+`region` (`fr-fr`), `time_limit` (`d` | `w` | `m` | `y`).
+
+For French conversations, also set `"language": "fr"` in the `audio` section so
+Whisper transcribes French.
+
 ### Authentication
 
 The dashboard uses JWT auth. On first start an admin account is seeded from
@@ -237,6 +296,8 @@ curl -X POST http://localhost:8000/token \
 | GET    | `/api/awareness/history`          | yes  | Recent identifications (`?subject=Alice`) |
 | GET    | `/api/metrics`                    | yes  | System/component metrics |
 | POST   | `/api/backup`                     | yes  | Create a backup          |
+| POST   | `/api/chat`                       | yes  | Ask the assistant (`{"text": "...", "speak": false}`) |
+| DELETE | `/api/chat/history`               | yes  | Reset conversation memory |
 | WS     | `/ws`                             | yes  | Live state + metrics     |
 
 ---

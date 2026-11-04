@@ -89,6 +89,35 @@
             "ttl_minutes": 60
         }
     },
+    "conversation": {
+        "enabled": true,
+        "assistant_name": "Jarvis",
+        "owner_name": "Viny",
+        "language": "fr",
+        "wake_word": "jarvis",
+        "require_wake_word": true,
+        "history_size": 6,
+        "cache_size": 200,
+        "speech_cooldown": 1.0,
+        "llm": {
+            "base_url": "http://localhost:11434",
+            "model": "qwen2.5:3b",
+            "vision_model": "llava:7b",
+            "temperature": 0.7,
+            "max_tokens": 200,
+            "timeout": 60,
+            "auto_pull": false
+        },
+        "web_search": {
+            "enabled": true,
+            "provider": "auto",
+            "max_results": 3,
+            "fetch_content": false,
+            "timeout": 10,
+            "region": "fr-fr",
+            "time_limit": "m"
+        }
+    },
     "automation": {
         "scenes_file": "config/scenes.json",
         "default_timeout": 30,

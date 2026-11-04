@@ -15,6 +15,7 @@ from ..components.memory.memory_component import MemoryComponent
 from ..components.automation.automation_component import AutomationComponent
 from ..components.awareness.awareness_component import AwarenessComponent
 from ..integrations.home_assistant import build_home_assistant_client
+from ..components.conversation.conversation_component import ConversationComponent
 from ..utils.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -55,6 +56,9 @@ class JarvisCore:
 
         # Shared Home Assistant connection (None if HA_URL/HA_TOKEN unset)
         self.ha_client = None
+
+        # Fire-and-forget tasks (e.g. LLM answers) kept referenced until done
+        self._side_tasks: Set[asyncio.Task] = set()
     
     def _load_config(self) -> Dict[str, Any]:
         """Load main configuration file."""
@@ -129,10 +133,11 @@ class JarvisCore:
         self.is_running = False
 
         # Cancel background tasks (processing loops + bus pumps)
-        for task in self._loop_tasks + self._pump_tasks:
+        for task in self._loop_tasks + self._pump_tasks + list(self._side_tasks):
             task.cancel()
         self._loop_tasks = []
         self._pump_tasks = []
+        self._side_tasks = set()
 
         # Stop all components
         for component in self.components.values():
@@ -180,6 +185,12 @@ class JarvisCore:
             {**self.config.get("awareness", {}), "frigate": self.config.get("frigate", {})},
             ha_client=self.ha_client,
         )
+
+        # Conversation component (local LLM via Ollama, ported from Ciel).
+        # Optional: disable with "conversation": {"enabled": false}.
+        conversation_config = self.config.get("conversation", {})
+        if conversation_config.get("enabled", True):
+            self.components["conversation"] = ConversationComponent(conversation_config)
         
         # Start all components
         for name, component in self.components.items():
@@ -192,6 +203,20 @@ class JarvisCore:
 
         # Connect producers (vision/audio/awareness) to consumers (memory/automation/core)
         self._wire_message_bus()
+        self._wire_conversation()
+
+    def _wire_conversation(self):
+        """Give the conversation component its voice (audio TTS) and eyes
+        (latest camera frame for the optional multimodal model)."""
+        conversation = self.components.get("conversation")
+        if conversation is None:
+            return
+        audio = self.components.get("audio")
+        if audio is not None and hasattr(audio, "speak"):
+            conversation.speaker = audio.speak
+        vision = self.components.get("vision")
+        if vision is not None and hasattr(vision, "get_frame"):
+            conversation.frame_provider = vision.get_frame
 
     def _wire_message_bus(self):
         """Route messages published by producers to interested consumers.
@@ -203,6 +228,7 @@ class JarvisCore:
         """
         memory = self.components.get("memory")
         automation = self.components.get("automation")
+        conversation = self.components.get("conversation")
 
         for producer_name in ("vision", "audio", "awareness"):
             producer = self.components.get(producer_name)
@@ -214,6 +240,9 @@ class JarvisCore:
                 handlers.append(memory.process_message)
             if automation is not None and hasattr(automation, "handle_message"):
                 handlers.append(automation.handle_message)
+            if (producer_name == "vision" and conversation is not None
+                    and hasattr(conversation, "handle_message")):
+                handlers.append(conversation.handle_message)  # scene context
             handlers.append(self.event_queue.put)  # let the core react too
 
             queue: asyncio.Queue = asyncio.Queue()
@@ -349,7 +378,8 @@ class JarvisCore:
     
     async def _handle_speech_event(self, data: Dict[str, Any]):
         """Handle speech recognition events."""
-        text = (data.get("text") or "").lower()
+        raw_text = data.get("text") or ""
+        text = raw_text.lower()
         if not text:
             return
 
@@ -357,13 +387,40 @@ class JarvisCore:
         if "jarvis" in text:
             if "stop" in text or "shutdown" in text:
                 await self.stop()
+                return
             elif "status" in text:
                 await self._report_status()
+                return
             else:
                 # Convert speech to command
                 command = self._parse_speech_command(text)
                 if command:
                     await self.command_queue.put(command)
+                    return
+
+        # Not a system/scene command: let the conversation component answer,
+        # unless the automation component already treats it as a device command.
+        if not self._is_device_command(text):
+            self._route_to_conversation(raw_text)
+
+    def _is_device_command(self, text: str) -> bool:
+        automation = self.components.get("automation")
+        parser = getattr(automation, "_parse_speech_command", None)
+        if parser is None:
+            return False
+        try:
+            return parser(text) is not None
+        except Exception:
+            return False
+
+    def _route_to_conversation(self, text: str):
+        """Answer in the background so a slow LLM never blocks the event loop."""
+        conversation = self.components.get("conversation")
+        if conversation is None or not hasattr(conversation, "handle_speech"):
+            return
+        task = asyncio.create_task(conversation.handle_speech(text))
+        self._side_tasks.add(task)
+        task.add_done_callback(self._side_tasks.discard)
     
     async def _handle_device_event(self, data: Dict[str, Any]):
         """Handle device state update events."""
