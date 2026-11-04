@@ -206,8 +206,9 @@ class JarvisCore:
         self._wire_conversation()
 
     def _wire_conversation(self):
-        """Give the conversation component its voice (audio TTS) and eyes
-        (latest camera frame for the optional multimodal model)."""
+        """Give the conversation component its voice (audio TTS), eyes (latest
+        camera frame for the optional multimodal model) and house awareness
+        (Frigate/Home Assistant world model + awareness history)."""
         conversation = self.components.get("conversation")
         if conversation is None:
             return
@@ -217,6 +218,12 @@ class JarvisCore:
         vision = self.components.get("vision")
         if vision is not None and hasattr(vision, "get_frame"):
             conversation.frame_provider = vision.get_frame
+        awareness = self.components.get("awareness")
+        if awareness is not None and hasattr(awareness, "snapshot"):
+            conversation.awareness_provider = awareness.snapshot
+        memory = self.components.get("memory")
+        if memory is not None and hasattr(memory, "get_awareness_history"):
+            conversation.history_provider = memory.get_awareness_history
 
     def _wire_message_bus(self):
         """Route messages published by producers to interested consumers.

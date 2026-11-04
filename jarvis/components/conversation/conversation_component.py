@@ -14,7 +14,10 @@ What it brings over from Ciel's ConversationModule:
     "Master Viny" feature, made configurable instead of hard-coded;
   * TTS-friendly response cleaning and echo prevention while speaking;
   * web search (Google Custom Search, DuckDuckGo fallback) for questions
-    that need fresh information - see web_search.py.
+    that need fresh information - see web_search.py;
+  * house awareness: questions about who/what is where are answered from
+    Frigate + Home Assistant data and the awareness history - see
+    house_context.py.
 
 Unlike Ciel (threads + blocking calls) everything here is asyncio-native and
 fits 9S's BaseComponent / Message bus model.
@@ -31,6 +34,7 @@ from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional
 from ...core.base_component import BaseComponent
 from ...core.message import Message
 from ...utils.logging_utils import get_logger
+from . import house_context
 from .llm_client import LLMError, OllamaClient
 from .web_search import WebSearch
 
@@ -180,6 +184,9 @@ class ConversationComponent(BaseComponent):
         # and usable without audio/vision hardware).
         self.speaker: Optional[Callable[[str], Awaitable[Any]]] = None
         self.frame_provider: Optional[Callable[[], Any]] = None
+        # AwarenessComponent.snapshot and MemoryComponent.get_awareness_history
+        self.awareness_provider: Optional[Callable[[], Dict[str, Any]]] = None
+        self.history_provider: Optional[Callable[..., Awaitable[List[Dict[str, Any]]]]] = None
 
         self.latest_vision: Dict[str, Any] = {}
         self._latest_vision_ts: float = 0.0
@@ -290,11 +297,15 @@ class ConversationComponent(BaseComponent):
             return canned, "canned"
 
         is_visual = self._is_vision_query(query)
-        needs_search = (not is_visual and self.web_search is not None
+        snapshot = self._awareness_snapshot()
+        is_house = snapshot is not None and house_context.is_house_query(
+            query, snapshot, self.language)
+        # House questions are answered from the cameras, never from the web.
+        needs_search = (not is_visual and not is_house and self.web_search is not None
                         and self.web_search.available
                         and self.web_search.is_search_query(query))
-        # Visual and web answers depend on the moment, so they are never cached.
-        cacheable = not is_visual and not needs_search
+        # Visual, house and web answers depend on the moment: never cached.
+        cacheable = not is_visual and not is_house and not needs_search
         key = self._cache_key(query, owner_present)
         if cacheable and key in self._cache:
             self._cache.move_to_end(key)
@@ -302,7 +313,8 @@ class ConversationComponent(BaseComponent):
 
         scene = await self._scene_context() if is_visual else ""
         search = await self._search_context(query) if needs_search else ""
-        messages = self._build_messages(query, scene, owner_present, search)
+        house = await self._house_context(query, snapshot) if is_house else ""
+        messages = self._build_messages(query, scene, owner_present, search, house)
         try:
             raw = await self.llm.chat(self.model, messages, self.options)
             self.llm_available = True
@@ -311,13 +323,13 @@ class ConversationComponent(BaseComponent):
             self.llm_available = False
             return self.texts["error"], "error"
 
-        answer = self.clean_response(raw, long_form=bool(is_visual or search),
+        answer = self.clean_response(raw, long_form=bool(is_visual or search or house),
                                      fallback=self.texts["empty"])
         self.history.append({"role": "user", "content": query})
         self.history.append({"role": "assistant", "content": answer})
         if cacheable:
             self._cache_put(key, answer)
-        return answer, ("web" if search else "llm")
+        return answer, ("web" if search else "house" if house else "llm")
 
     async def _search_context(self, query: str) -> str:
         try:
@@ -330,6 +342,32 @@ class ConversationComponent(BaseComponent):
         self._last_sources = [r["url"] for r in results if r.get("url")]
         return self.texts["search"].format(query=query,
                                            results=WebSearch.summarize(results))
+
+    def _awareness_snapshot(self) -> Optional[Dict[str, Any]]:
+        if self.awareness_provider is None:
+            return None
+        try:
+            return self.awareness_provider()
+        except Exception as e:
+            logger.warning(f"Awareness snapshot unavailable: {e}")
+            return None
+
+    async def _house_context(self, query: str, snapshot: Dict[str, Any]) -> str:
+        """House status + the relevant awareness history, as prompt text."""
+        history: List[Dict[str, Any]] = []
+        if self.history_provider is not None:
+            subjects = house_context.mentioned_subjects(query, snapshot)
+            try:
+                if subjects:
+                    for subject in subjects[:3]:
+                        history.extend(await self.history_provider(subject, 5))
+                else:
+                    history = await self.history_provider(None, 8)
+            except Exception as e:
+                logger.warning(f"Awareness history unavailable: {e}")
+        history.sort(key=lambda e: e.get("timestamp") or "", reverse=True)
+        house = house_context.describe_house(snapshot, history, self.language)
+        return house_context.texts(self.language)["header"].format(house=house)
 
     async def _speak(self, text: str):
         if self.speaker is None:
@@ -391,7 +429,7 @@ class ConversationComponent(BaseComponent):
         self._cache.clear()
 
     def _build_messages(self, query: str, scene: str, owner_present: bool,
-                        search: str = "") -> List[Dict[str, Any]]:
+                        search: str = "", house: str = "") -> List[Dict[str, Any]]:
         system = self.texts["system"].format(name=self.assistant_name)
         system += "\n" + self.texts["date"].format(date=datetime.now().strftime("%Y-%m-%d %H:%M"))
         if owner_present and self.owner_name:
@@ -403,6 +441,8 @@ class ConversationComponent(BaseComponent):
             system += "\n\n" + self.texts["scene"].format(scene=scene)
         if search:
             system += "\n\n" + search
+        if house:
+            system += "\n\n" + house
         return [{"role": "system", "content": system}, *self.history,
                 {"role": "user", "content": query}]
 
