@@ -41,7 +41,9 @@ Jarvis builds on the ones already running in the house:
   sees and of who is in front of it; an optional multimodal model (`llava`)
   describes the live frame. Questions needing fresh information (news,
   weather, prices…) trigger a web search (Google Custom Search, DuckDuckGo
-  fallback) whose results ground the answer. Ported from the Ciel project.
+  fallback) whose results ground the answer. Questions about the house
+  (*« qui est à la maison ? »*, *« Alice est rentrée ? »*) are answered from
+  Awareness and its history instead. Ported from the Ciel project.
 - **Web dashboard** — FastAPI + WebSocket interface for status, metrics, scene
   control, and backups, protected by JWT authentication.
 
@@ -68,6 +70,10 @@ system commands (`stop`, `status`, `restart`) and scenes, then against device
 commands (automation). Anything else goes to the conversation component, which
 answers through TTS. Vision updates are also fed to the conversation component
 so questions like *« Jarvis, qu'est-ce que tu vois ? »* use the current scene.
+Questions about the house — who is home, who came by, where someone is, which
+car is in the driveway — get the Awareness world model (Frigate areas, people
+and plates last seen, Home Assistant presence) and the matching
+`awareness_events` history instead of a web search.
 
 Each component subclasses `BaseComponent` and publishes `Message` objects. The
 core wires producers (vision, audio, awareness) to consumers (memory,
@@ -249,8 +255,39 @@ Options under `conversation.web_search`: `enabled`, `provider`
 also download and extract each result page; richer but slower), `timeout`,
 `region` (`fr-fr`), `time_limit` (`d` | `w` | `m` | `y`).
 
-For French conversations, also set `"language": "fr"` in the `audio` section so
-Whisper transcribes French.
+`audio.language` (default `fr` in the shipped config) sets the language Whisper
+transcribes; keep it in line with `conversation.language`.
+
+#### House questions
+
+When Frigate or Home Assistant is configured, questions such as *« qui est à
+la maison ? »*, *« qui est passé aujourd'hui ? »*, *« quelle voiture est dans
+l'allée ? »* or any question naming a known person, plate or Frigate area are
+answered from the Awareness snapshot plus the recent `awareness_events`
+history (the history of that person/plate/area when one is named). These
+questions never trigger a web search and are never cached. The webcam scene
+(*« qu'est-ce que tu vois ? »*) is separate: it describes what the computer's
+camera sees.
+
+### Microphone and speakers
+
+Jarvis listens on the **macOS default input device** (System Settings → Sound
+→ Input) and speaks on the default output, unless `.env` says otherwise:
+
+```bash
+python scripts/list_audio_devices.py      # lists microphones and speakers
+```
+
+```dotenv
+AUDIO_INPUT_DEVICE=Blue Yeti        # an index, or part of the device name
+AUDIO_OUTPUT_DEVICE=                # blank = system default
+```
+
+The chosen devices are logged at startup (`Microphone: …`, `Speakers: …`).
+Note that macOS switches the default input to AirPods when they connect; name
+the device explicitly to avoid that. Conversation only answers utterances
+containing the wake word (`jarvis`) and ignores the microphone while it is
+speaking, so it doesn't answer itself.
 
 ### Authentication
 

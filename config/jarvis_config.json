@@ -46,6 +46,9 @@
         }
     },
     "audio": {
+        "input_device": "${AUDIO_INPUT_DEVICE}",
+        "output_device": "${AUDIO_OUTPUT_DEVICE}",
+        "language": "fr",
         "sample_rate": 16000,
         "whisper_model": "base",
         "device": "cpu",
