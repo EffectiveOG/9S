@@ -72,6 +72,25 @@
                 <h2 class="text-xl font-semibold mb-4">Event Log</h2>
                 <div id="eventLog" class="h-48 overflow-y-auto space-y-2 text-sm"></div>
             </div>
+
+            <!-- Face library (Frigate-style): people, their images, recent faces to train -->
+            <div class="bg-white rounded-lg shadow p-6 md:col-span-2 lg:col-span-3">
+                <div class="flex flex-wrap justify-between items-center gap-2 mb-4">
+                    <h2 class="text-xl font-semibold">Faces</h2>
+                    <div class="flex gap-2">
+                        <input id="newPersonName" type="text" placeholder="New person name"
+                               class="p-2 border rounded text-sm" maxlength="64">
+                        <button onclick="createPerson()"
+                                class="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600">Add person</button>
+                        <button onclick="loadFaces()"
+                                class="bg-gray-200 px-3 py-1 rounded text-sm hover:bg-gray-300">Refresh</button>
+                    </div>
+                </div>
+                <p id="facesMessage" class="text-sm mb-3 hidden"></p>
+                <div id="facePeople" class="space-y-4"></div>
+                <h3 class="text-lg font-semibold mt-6 mb-2">Recent faces <span class="text-sm font-normal text-gray-500">— assign them to a person to improve recognition</span></h3>
+                <div id="faceAttempts" class="flex flex-wrap gap-3"></div>
+            </div>
         </div>
     </div>
 
@@ -125,6 +144,7 @@
             connectWebSocket();
             loadStatus();
             loadScenes();
+            loadFaces();
         }
 
         function connectWebSocket() {
@@ -217,6 +237,185 @@
                 const data = await res.json();
                 if (data.status === 'success') console.log(`Scene ${scene} activated`);
             } catch (e) { /* handled by authFetch */ }
+        }
+
+        // ------------------------------------------------------------------
+        // Face library. Built with DOM APIs + textContent (no innerHTML) since
+        // names and file names come from the server / user input.
+        // ------------------------------------------------------------------
+        let facePeople = {};
+        const thumbUrls = [];
+
+        function el(tag, cls, text) {
+            const e = document.createElement(tag);
+            if (cls) e.className = cls;
+            if (text !== undefined) e.textContent = text;
+            return e;
+        }
+
+        function button(label, cls, onclick) {
+            const b = el('button', cls + ' px-2 py-1 rounded text-xs', label);
+            b.onclick = onclick;
+            return b;
+        }
+
+        function facesMessage(text, ok) {
+            const m = document.getElementById('facesMessage');
+            m.textContent = text;
+            m.className = 'text-sm mb-3 ' + (ok ? 'text-green-600' : 'text-red-600');
+            clearTimeout(m._t);
+            m._t = setTimeout(() => m.classList.add('hidden'), 6000);
+        }
+
+        async function faceApi(url, opts = {}) {
+            const res = await authFetch(url, opts);
+            let data = {};
+            try { data = await res.json(); } catch (e) { /* empty body */ }
+            if (!res.ok) throw new Error(data.detail || res.statusText);
+            return data;
+        }
+
+        function jsonOpts(method, body) {
+            return { method, headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify(body || {}) };
+        }
+
+        async function thumb(url, title) {
+            const img = el('img', 'w-20 h-20 object-cover rounded border');
+            img.title = title || '';
+            try {
+                const res = await authFetch(url);
+                if (res.ok) {
+                    const u = URL.createObjectURL(await res.blob());
+                    thumbUrls.push(u);
+                    img.src = u;
+                }
+            } catch (e) { /* ignore */ }
+            return img;
+        }
+
+        async function loadFaces() {
+            let data;
+            try { data = await faceApi('/api/faces'); }
+            catch (e) {
+                document.getElementById('facePeople').textContent = 'Face recognition not available.';
+                return;
+            }
+            thumbUrls.splice(0).forEach(u => URL.revokeObjectURL(u));
+            facePeople = data.people || {};
+            renderPeople();
+            renderAttempts(data.attempts || []);
+        }
+
+        function renderPeople() {
+            const root = document.getElementById('facePeople');
+            root.replaceChildren();
+            const names = Object.keys(facePeople);
+            if (!names.length) root.appendChild(el('p', 'text-gray-500 text-sm', 'No known faces yet.'));
+            names.forEach(name => {
+                const card = el('div', 'border rounded p-3');
+                const head = el('div', 'flex flex-wrap items-center gap-2 mb-2');
+                head.appendChild(el('span', 'font-medium mr-2', `${name} (${facePeople[name].length})`));
+                head.appendChild(button('Capture from camera', 'bg-blue-500 text-white hover:bg-blue-600',
+                                        () => enrollFromCamera(name)));
+                const upload = el('input'); upload.type = 'file'; upload.accept = 'image/*';
+                upload.className = 'hidden';
+                upload.onchange = () => uploadFace(name, upload.files[0]);
+                head.appendChild(button('Upload image', 'bg-gray-200 hover:bg-gray-300', () => upload.click()));
+                head.appendChild(upload);
+                head.appendChild(button('Rename', 'bg-gray-200 hover:bg-gray-300', () => renamePerson(name)));
+                head.appendChild(button('Delete', 'bg-red-100 text-red-700 hover:bg-red-200', () => deletePerson(name)));
+                card.appendChild(head);
+                const imgs = el('div', 'flex flex-wrap gap-2');
+                facePeople[name].forEach(async file => {
+                    const wrap = el('div', 'relative');
+                    wrap.appendChild(await thumb(`/api/faces/${encodeURIComponent(name)}/${encodeURIComponent(file)}`, file));
+                    const x = button('×', 'absolute top-0 right-0 bg-white bg-opacity-80 text-red-600',
+                                     () => deleteFaceImage(name, file));
+                    wrap.appendChild(x);
+                    imgs.appendChild(wrap);
+                });
+                card.appendChild(imgs);
+                root.appendChild(card);
+            });
+        }
+
+        function renderAttempts(attempts) {
+            const root = document.getElementById('faceAttempts');
+            root.replaceChildren();
+            if (!attempts.length) root.appendChild(el('p', 'text-gray-500 text-sm', 'No recent faces.'));
+            attempts.forEach(async a => {
+                const card = el('div', 'border rounded p-2 text-xs w-32');
+                card.appendChild(await thumb(`/api/faces/train/${encodeURIComponent(a.file)}`, a.file));
+                const label = a.identity === 'unknown' ? 'Unknown' : `${a.identity} ${Math.round(a.score * 100)}%`;
+                card.appendChild(el('div', 'mt-1 ' + (a.identity === 'unknown' ? 'text-gray-500' : 'text-green-700'), label));
+                card.appendChild(el('div', 'text-gray-400', new Date(a.timestamp * 1000).toLocaleString()));
+                const select = el('select', 'w-full border rounded mt-1');
+                select.appendChild(el('option', '', 'Assign to…'));
+                Object.keys(facePeople).forEach(n => {
+                    const o = el('option', '', n); o.value = n; select.appendChild(o);
+                });
+                select.onchange = () => select.value && trainAttempt(a.file, select.value);
+                card.appendChild(select);
+                card.appendChild(button('Delete', 'mt-1 w-full bg-gray-100 hover:bg-gray-200', () => deleteAttempt(a.file)));
+                root.appendChild(card);
+            });
+        }
+
+        async function faceAction(promise, okText) {
+            try { await promise; facesMessage(okText, true); }
+            catch (e) { facesMessage(e.message, false); }
+            loadFaces();
+        }
+
+        function createPerson() {
+            const input = document.getElementById('newPersonName');
+            const name = input.value.trim();
+            if (!name) return;
+            input.value = '';
+            faceAction(faceApi(`/api/faces/${encodeURIComponent(name)}/create`, { method: 'POST' }),
+                       `${name} added — capture or upload a few images.`);
+        }
+
+        function enrollFromCamera(name) {
+            facesMessage(`Look at the camera… capturing ${name}`, true);
+            faceAction(faceApi(`/api/faces/${encodeURIComponent(name)}/enroll`, jsonOpts('POST', { samples: 5 })),
+                       `Images captured for ${name}.`);
+        }
+
+        function uploadFace(name, file) {
+            if (!file) return;
+            const form = new FormData();
+            form.append('file', file);
+            faceAction(faceApi(`/api/faces/${encodeURIComponent(name)}/register`, { method: 'POST', body: form }),
+                       `Image added to ${name}.`);
+        }
+
+        function renamePerson(name) {
+            const newName = prompt(`Rename ${name} to:`, name);
+            if (!newName || newName === name) return;
+            faceAction(faceApi(`/api/faces/${encodeURIComponent(name)}/rename`, jsonOpts('PUT', { new_name: newName })),
+                       `${name} renamed to ${newName}.`);
+        }
+
+        function deletePerson(name) {
+            if (!confirm(`Delete ${name} and all their images?`)) return;
+            faceAction(faceApi(`/api/faces/${encodeURIComponent(name)}`, { method: 'DELETE' }), `${name} deleted.`);
+        }
+
+        function deleteFaceImage(name, file) {
+            if (!confirm('Delete this image?')) return;
+            faceAction(faceApi(`/api/faces/${encodeURIComponent(name)}/delete`, jsonOpts('POST', { ids: [file] })),
+                       'Image deleted.');
+        }
+
+        function trainAttempt(file, name) {
+            faceAction(faceApi(`/api/faces/train/${encodeURIComponent(name)}/classify`,
+                               jsonOpts('POST', { training_file: file })), `Face assigned to ${name}.`);
+        }
+
+        function deleteAttempt(file) {
+            faceAction(faceApi('/api/faces/train/delete', jsonOpts('POST', { ids: [file] })), 'Recent face deleted.');
         }
 
         // Allow Enter key to submit the login form.

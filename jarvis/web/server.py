@@ -8,7 +8,8 @@ try:
 except ImportError:
     pass
 
-from fastapi import FastAPI, WebSocket, HTTPException, Depends, status, Request
+from fastapi import FastAPI, WebSocket, HTTPException, Depends, status, Request, UploadFile, File
+from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import ipaddress
@@ -237,6 +238,133 @@ async def clear_chat_history(current_user: Dict = Depends(security.get_current_u
         raise HTTPException(status_code=503, detail="Conversation component not available")
     conversation.clear_history()
     return {"status": "success"}
+
+# ---------------------------------------------------------------------------
+# Face library (Frigate-style): people, images, recent attempts to train.
+# Train routes are declared before /api/faces/{name}/... so "train" is never
+# captured as a person name (it is also a reserved name in FaceLibrary).
+# ---------------------------------------------------------------------------
+MAX_FACE_UPLOAD_BYTES = 10 * 1024 * 1024
+
+def _face_library():
+    vision = jarvis.components.get("vision") if jarvis else None
+    library = getattr(vision, "face_library", None)
+    if library is None:
+        raise HTTPException(status_code=503, detail="Face recognition not available")
+    return library
+
+def _face_error(e: Exception) -> HTTPException:
+    from jarvis.components.vision.face_library import FaceLibraryError
+    if isinstance(e, FaceLibraryError):
+        return HTTPException(status_code=400, detail=str(e))
+    logger.error(f"Face library error: {e}")
+    return HTTPException(status_code=500, detail="Face library error")
+
+@app.get("/api/faces")
+async def list_faces(current_user: Dict = Depends(security.get_current_user)):
+    """Known people with their images, plus recent recognition attempts."""
+    library = _face_library()
+    return {"people": library.people(), "attempts": library.attempts()}
+
+@app.get("/api/faces/train/{filename}")
+async def get_face_attempt(filename: str, current_user: Dict = Depends(security.get_current_user)):
+    try:
+        return FileResponse(_face_library().attempt_path(filename), media_type="image/jpeg")
+    except Exception as e:
+        raise _face_error(e)
+
+@app.post("/api/faces/train/{name}/classify")
+async def classify_face_attempt(name: str, payload: Dict[str, Any],
+                                current_user: Dict = Depends(security.get_current_user)):
+    """Assign a recent attempt to a person. Body: {"training_file": "..."}."""
+    try:
+        saved = await _face_library().train_attempt(str(payload.get("training_file", "")), name)
+        return {"status": "success", "file": saved}
+    except Exception as e:
+        raise _face_error(e)
+
+@app.post("/api/faces/train/delete")
+async def delete_face_attempts(payload: Dict[str, Any],
+                               current_user: Dict = Depends(security.get_current_user)):
+    """Body: {"ids": ["<attempt file>", ...]}."""
+    try:
+        return {"status": "success", "deleted": _face_library().delete_attempts(list(payload.get("ids", [])))}
+    except Exception as e:
+        raise _face_error(e)
+
+@app.post("/api/faces/{name}/create")
+async def create_face_person(name: str, current_user: Dict = Depends(security.get_current_user)):
+    try:
+        return {"status": "success", "name": _face_library().create_person(name)}
+    except Exception as e:
+        raise _face_error(e)
+
+@app.post("/api/faces/{name}/register")
+async def register_face_image(name: str, file: UploadFile = File(...),
+                              current_user: Dict = Depends(security.get_current_user)):
+    """Upload an image containing exactly one face of `name`."""
+    data = await file.read(MAX_FACE_UPLOAD_BYTES + 1)
+    if len(data) > MAX_FACE_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large (max 10 MB)")
+    try:
+        saved = await _face_library().register_image(name, data)
+        return {"status": "success", "file": saved}
+    except Exception as e:
+        raise _face_error(e)
+
+@app.post("/api/faces/{name}/enroll")
+async def enroll_face_from_camera(name: str, payload: Dict[str, Any] = None,
+                                  current_user: Dict = Depends(security.get_current_user)):
+    """Capture samples of the person in front of the camera. Body: {"samples": 5}."""
+    _face_library()
+    payload = payload or {}
+    try:
+        samples = max(1, min(20, int(payload.get("samples", 0)) or 5))
+        saved = await jarvis.components["vision"].enroll_face(name, samples=samples)
+    except Exception as e:
+        raise _face_error(e)
+    if not saved:
+        raise HTTPException(status_code=422, detail="No single face captured; face the camera alone")
+    return {"status": "success", "samples": saved}
+
+@app.post("/api/faces/{name}/delete")
+async def delete_face_images(name: str, payload: Dict[str, Any],
+                             current_user: Dict = Depends(security.get_current_user)):
+    """Body: {"ids": ["<image file>", ...]}."""
+    try:
+        deleted = await _face_library().delete_images(name, list(payload.get("ids", [])))
+        return {"status": "success", "deleted": deleted}
+    except Exception as e:
+        raise _face_error(e)
+
+@app.put("/api/faces/{name}/rename")
+async def rename_face_person(name: str, payload: Dict[str, Any],
+                             current_user: Dict = Depends(security.get_current_user)):
+    """Body: {"new_name": "..."}."""
+    try:
+        new = await _face_library().rename_person(name, str(payload.get("new_name", "")))
+        return {"status": "success", "name": new}
+    except Exception as e:
+        raise _face_error(e)
+
+@app.delete("/api/faces/{name}")
+async def delete_face_person(name: str, current_user: Dict = Depends(security.get_current_user)):
+    try:
+        if not await _face_library().delete_person(name):
+            raise HTTPException(status_code=404, detail="Unknown person")
+        return {"status": "success"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _face_error(e)
+
+@app.get("/api/faces/{name}/{filename}")
+async def get_face_image(name: str, filename: str,
+                         current_user: Dict = Depends(security.get_current_user)):
+    try:
+        return FileResponse(_face_library().image_path(name, filename))
+    except Exception as e:
+        raise _face_error(e)
 
 @app.get("/api/scenes")
 async def get_scenes(current_user: Dict = Depends(security.get_current_user)):

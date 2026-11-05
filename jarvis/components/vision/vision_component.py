@@ -2,6 +2,7 @@
 
 from typing import List, Dict, Any, Optional
 import asyncio
+import time
 import cv2
 import numpy as np
 from pathlib import Path
@@ -9,6 +10,7 @@ from ...core.base_component import BaseComponent
 from ...core.message import Message
 from .processors.object_detector import ObjectDetector
 from .processors.face_recognizer import FaceRecognizer
+from .face_library import FaceLibrary, FaceLibraryError
 from .processors.gesture_detector import GestureDetector
 from ...utils.logging_utils import get_logger
 
@@ -66,11 +68,23 @@ class VisionComponent(BaseComponent):
         else:
             self.object_detector = None
 
+        self.face_library = None
         if config.get("detect_faces", True):
+            known_faces_dir = config.get("known_faces_dir", "data/known_faces")
             self.face_recognizer = FaceRecognizer(
-                known_faces_dir=config.get("known_faces_dir", "data/known_faces"),
+                known_faces_dir=known_faces_dir,
                 recognition_threshold=config.get("face_recognition_threshold", 0.6)
             )
+            library_cfg = config.get("face_library", {}) or {}
+            self.face_library = FaceLibrary(
+                self.face_recognizer,
+                faces_dir=known_faces_dir,
+                attempts_dir=library_cfg.get("attempts_dir", "data/face_attempts"),
+                max_attempts=library_cfg.get("save_attempts", 50),
+                attempt_interval=library_cfg.get("attempt_interval", 5.0),
+            )
+            self.enroll_samples = int(library_cfg.get("enroll_samples", 5))
+            self.enroll_timeout = float(library_cfg.get("enroll_timeout", 10.0))
         else:
             self.face_recognizer = None
 
@@ -92,6 +106,34 @@ class VisionComponent(BaseComponent):
     def get_frame(self):
         """Return the most recently captured frame (or None). Used by the GUI."""
         return self.latest_frame
+
+    async def enroll_face(self, name: str, samples: Optional[int] = None,
+                          timeout: Optional[float] = None, interval: float = 0.4) -> int:
+        """Capture face samples of the person in front of the camera (Ciel's
+        "apprends mon visage"). Frames with zero or several faces are skipped.
+
+        Returns the number of samples saved (0 if nobody could be captured).
+        """
+        if self.face_library is None:
+            raise FaceLibraryError("Face recognition is disabled")
+        FaceLibrary.validate_name(name)
+        samples = samples or self.enroll_samples
+        deadline = time.monotonic() + (timeout or self.enroll_timeout)
+        saved, last_frame = 0, None
+        while saved < samples and time.monotonic() < deadline:
+            frame = self.latest_frame
+            if frame is None or frame is last_frame:
+                await asyncio.sleep(0.1)
+                continue
+            last_frame = frame
+            try:
+                await self.face_library.register_frame(name, frame.copy())
+                saved += 1
+                await asyncio.sleep(interval)  # let the pose/lighting vary a bit
+            except FaceLibraryError:
+                await asyncio.sleep(0.1)  # no face / several faces: try next frame
+        logger.info(f"Face enrollment for {name}: {saved}/{samples} samples")
+        return saved
 
     async def process_frames(self):
         """Main processing loop for camera frames."""
@@ -279,6 +321,13 @@ class VisionComponent(BaseComponent):
                         results.update(result)
                     else:
                         logger.warning(f"Unexpected result type from processor {idx}: {type(result)}")
+
+            # Keep recent face crops so they can be assigned to a person later
+            # (Frigate-style "train" list). Throttled inside the library.
+            if self.face_library is not None and results.get("faces"):
+                await asyncio.to_thread(
+                    self.face_library.record_attempts, frame, results["faces"]
+                )
             
         except Exception as e:
             logger.error(f"Error processing frame: {e}")

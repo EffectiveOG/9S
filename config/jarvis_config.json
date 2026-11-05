@@ -30,6 +30,15 @@
         "frame_skip": 2,
         "detect_objects": true,
         "detect_faces": true,
+        "known_faces_dir": "data/known_faces",
+        "face_recognition_threshold": 0.6,
+        "face_library": {
+            "attempts_dir": "data/face_attempts",
+            "save_attempts": 50,
+            "attempt_interval": 5.0,
+            "enroll_samples": 5,
+            "enroll_timeout": 10.0
+        },
         "detect_gestures": true,
         "object_confidence": 0.25,
         "iou_threshold": 0.45,

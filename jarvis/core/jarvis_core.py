@@ -195,6 +195,8 @@ class JarvisCore:
         vision = self.components.get("vision")
         if vision is not None and hasattr(vision, "get_frame"):
             conversation.frame_provider = vision.get_frame
+        if getattr(vision, "face_library", None) is not None:
+            conversation.face_enroller = vision.enroll_face
 
     def _wire_message_bus(self):
         """Route messages published by producers to interested consumers.

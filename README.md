@@ -18,6 +18,10 @@ lights, and game consoles — via voice, gestures, and room occupancy.
 
 - **Vision** — webcam object detection (YOLOv8), face recognition, and hand-gesture
   detection, with an optional live preview window.
+- **Face library** — Frigate-style management of known faces: enroll by voice
+  (*« Jarvis, apprends mon visage »*, ported from Ciel) or from the dashboard
+  camera button, upload images, rename/delete people, and assign recently seen
+  (unknown or misrecognised) faces to a person to improve recognition.
 - **Audio** — microphone speech recognition (OpenAI Whisper) and text-to-speech.
 - **Memory** — detections and events persisted to a local SQLite database with
   automatic retention/cleanup.
@@ -175,6 +179,27 @@ also download and extract each result page; richer but slower), `timeout`,
 For French conversations, also set `"language": "fr"` in the `audio` section so
 Whisper transcribes French.
 
+### Face library
+
+Known faces live in `data/known_faces/<Person>/*.jpg` (one folder per person,
+like Frigate), and recent recognition attempts in `data/face_attempts/`. Both
+are git-ignored. Ways to add faces:
+
+- **Voice** (via the conversation component): *« Jarvis, apprends mon visage »*
+  enrolls the configured `owner_name`; *« apprends le visage de Marie »* enrolls
+  someone else (*"learn my face"*, *"learn Tom's face"* in English). Jarvis asks
+  you to look at the camera and captures 5 samples, skipping frames with no
+  face or several faces.
+- **Dashboard → Faces**: *Capture from camera*, *Upload image* (one face per
+  image), rename/delete, and **Recent faces** — pick a person in *Assign to…* to
+  train on a face Jarvis just saw.
+- **Drop images** into a person's folder and restart.
+
+Tune it under `vision.face_library` in `config/jarvis_config.json`:
+`save_attempts` (50 most recent crops, `0` disables), `attempt_interval` (s
+between crops per identity), `enroll_samples`, `enroll_timeout`. The match
+threshold is `vision.face_recognition_threshold` (0.6).
+
 ### Authentication
 
 The dashboard uses JWT auth. On first start an admin account is seeded from
@@ -219,6 +244,14 @@ curl -X POST http://localhost:8000/token \
 | POST   | `/api/backup`                     | yes  | Create a backup          |
 | POST   | `/api/chat`                       | yes  | Ask the assistant (`{"text": "...", "speak": false}`) |
 | DELETE | `/api/chat/history`               | yes  | Reset conversation memory |
+| GET    | `/api/faces`                      | yes  | Known people + recent faces |
+| POST   | `/api/faces/{name}/create`        | yes  | Add a person             |
+| POST   | `/api/faces/{name}/register`      | yes  | Upload a face image (multipart `file`) |
+| POST   | `/api/faces/{name}/enroll`        | yes  | Capture from camera (`{"samples": 5}`) |
+| POST   | `/api/faces/train/{name}/classify`| yes  | Assign a recent face (`{"training_file": "..."}`) |
+| POST   | `/api/faces/{name}/delete`        | yes  | Delete images (`{"ids": [...]}`) |
+| PUT    | `/api/faces/{name}/rename`        | yes  | Rename (`{"new_name": "..."}`) |
+| DELETE | `/api/faces/{name}`               | yes  | Delete a person          |
 | WS     | `/ws`                             | yes  | Live state + metrics     |
 
 ---

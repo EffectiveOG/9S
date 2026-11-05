@@ -61,6 +61,16 @@ _TEXTS = {
         "no_camera": "La caméra n'est pas disponible pour le moment.",
         "error": "Désolé, je n'arrive pas à réfléchir pour le moment.",
         "empty": "Je vous écoute.",
+        "enroll_start": "Regardez la caméra, je mémorise le visage de {name}.",
+        "enroll_done": "C'est fait : {count} images enregistrées. Je pourrai désormais reconnaître {name}.",
+        "enroll_failed": ("Je n'ai pas réussi à capturer le visage de {name}. Placez-vous seul "
+                          "face à la caméra, bien éclairé, puis réessayez."),
+        "enroll_no_name": "Dites-moi de qui il s'agit : « apprends le visage de » suivi du prénom.",
+        "enroll_unavailable": "La reconnaissance faciale n'est pas activée.",
+        "enroll_patterns": [
+            r"\b(?:apprends?|enregistre|mémorise|retiens)\b.{0,20}?\bvisage\b"
+            r"(?:\s+(?:de|d')\s*(?P<name>[^\W\d_][\w' -]{0,40}))?",
+        ],
         "describe": "Décris précisément cette image en deux ou trois phrases, en français.",
         "vision_keywords": [
             "vois", "voir", "regarde", "montre", "décris", "décrire",
@@ -99,6 +109,17 @@ _TEXTS = {
         "no_camera": "The camera is not available right now.",
         "error": "Sorry, I can't think right now.",
         "empty": "I'm listening.",
+        "enroll_start": "Look at the camera, I'm memorising {name}'s face.",
+        "enroll_done": "Done: {count} images saved. I'll recognise {name} from now on.",
+        "enroll_failed": ("I couldn't capture {name}'s face. Stand alone in front of the "
+                          "camera, in good light, and try again."),
+        "enroll_no_name": "Tell me who it is: say \"learn the face of\" followed by the name.",
+        "enroll_unavailable": "Face recognition is not enabled.",
+        "enroll_patterns": [
+            r"\b(?:learn|remember|save|register)\s+(?P<name>[^\W\d_][\w-]{0,40})'s\s+face\b",
+            r"\b(?:learn|remember|save|register)\b.{0,15}?\bface\b"
+            r"(?:\s+of\s+(?P<name>[^\W\d_][\w' -]{0,40}))?",
+        ],
         "describe": "Describe this image precisely in two or three sentences.",
         "vision_keywords": [
             "see", "look", "show", "describe", "what am i holding",
@@ -180,6 +201,10 @@ class ConversationComponent(BaseComponent):
         # and usable without audio/vision hardware).
         self.speaker: Optional[Callable[[str], Awaitable[Any]]] = None
         self.frame_provider: Optional[Callable[[], Any]] = None
+        # async (name) -> number of face samples saved; wired to
+        # VisionComponent.enroll_face (Ciel's "apprends mon visage").
+        self.face_enroller: Optional[Callable[[str], Awaitable[int]]] = None
+        self._speak_enabled = False
 
         self.latest_vision: Dict[str, Any] = {}
         self._latest_vision_ts: float = 0.0
@@ -260,6 +285,7 @@ class ConversationComponent(BaseComponent):
             started = time.time()
             query = self._strip_wake_word(text)
             self._last_sources = []
+            self._speak_enabled = speak
             if not query:
                 answer, source = self.texts["empty"], "canned"
             else:
@@ -284,6 +310,10 @@ class ConversationComponent(BaseComponent):
             return answer
 
     async def _answer(self, query: str):
+        enroll = self._enroll_request(query)
+        if enroll is not None:
+            return await self._enroll(enroll), "face_enroll"
+
         owner_present = self._owner_present(query)
         canned = self._canned_answer(query, owner_present)
         if canned:
@@ -343,6 +373,36 @@ class ConversationComponent(BaseComponent):
             logger.error(f"Error speaking response: {e}")
         finally:
             self._speaking_until = time.time() + self.speech_cooldown
+
+    # ------------------------------------------------------- face enrollment
+    def _enroll_request(self, query: str) -> Optional[str]:
+        """Return the name to enroll ("" = speaker / owner) or None if the
+        utterance isn't an enrollment request."""
+        for pattern in self.texts["enroll_patterns"]:
+            m = re.search(pattern, query, re.IGNORECASE)
+            if m:
+                name = (m.groupdict().get("name") or "").strip(" .,!?'-")
+                if name.lower() in ("me", "moi", "my", "mon"):
+                    name = ""
+                return name[:1].upper() + name[1:] if name else ""
+        return None
+
+    async def _enroll(self, name: str) -> str:
+        name = name or (self.owner_name or "")
+        if not name:
+            return self.texts["enroll_no_name"]
+        if self.face_enroller is None:
+            return self.texts["enroll_unavailable"]
+        if self._speak_enabled:
+            await self._speak(self.texts["enroll_start"].format(name=name))
+        try:
+            count = await self.face_enroller(name)
+        except Exception as e:
+            logger.warning(f"Face enrollment failed for {name}: {e}")
+            count = 0
+        if count:
+            return self.texts["enroll_done"].format(name=name, count=count)
+        return self.texts["enroll_failed"].format(name=name)
 
     # --------------------------------------------------------------- helpers
     def _strip_wake_word(self, text: str) -> str:
