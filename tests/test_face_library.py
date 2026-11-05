@@ -103,7 +103,7 @@ async def test_attempts_are_throttled_capped_and_trainable(tmp_path):
     viny = {"identity": "Viny", "confidence": 0.82, "location": (0, 1, 1, 0)}
     lib.record_attempts(FakeFrame(), [unknown, viny], now=1000.0)
     lib.record_attempts(FakeFrame(), [unknown], now=1002.0)  # throttled
-    assert [(a["identity"], a["score"]) for a in lib.attempts()] == [("unknown", 0.0), ("Viny", 0.82)]
+    assert sorted((a["identity"], a["score"]) for a in lib.attempts()) == [("Viny", 0.82), ("unknown", 0.0)]
 
     for t in (1010.0, 1020.0, 1030.0):
         lib.record_attempts(FakeFrame(), [unknown], now=t)

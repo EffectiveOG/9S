@@ -133,7 +133,8 @@ class FaceLibrary:
                     items.append({"file": f.name, "identity": m["identity"],
                                   "score": float(m["score"]),
                                   "timestamp": int(m["ts"]) / 1000})
-        return sorted(items, key=lambda a: a["timestamp"], reverse=True)
+        # newest first; file name breaks ties so the order never depends on the filesystem
+        return sorted(items, key=lambda a: (a["timestamp"], a["file"]), reverse=True)
 
     # ------------------------------------------------------------- mutations
     def create_person(self, name: str) -> str:
