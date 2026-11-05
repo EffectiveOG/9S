@@ -128,11 +128,54 @@ class FaceRecognizer:
             logger.error(f"Error encoding face from {image_path}: {e}")
             return None
     
+    # ------------------------------------------------------------------
+    # Library management (used by FaceLibrary for enrollment / training)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def to_rgb(frame: np.ndarray) -> np.ndarray:
+        """OpenCV frames are BGR; face_recognition/dlib expect RGB."""
+        return np.ascontiguousarray(frame[:, :, ::-1])
+
+    def detect(self, frame: np.ndarray) -> List[Tuple[Tuple[int, int, int, int], np.ndarray]]:
+        """Blocking: return [(location, encoding)] for every face in a BGR frame.
+        Locations use face_recognition's (top, right, bottom, left) order."""
+        rgb = self.to_rgb(frame)
+        locations = face_recognition.face_locations(rgb)
+        encodings = face_recognition.face_encodings(rgb, locations)
+        return list(zip(locations, encodings))
+
+    def add_encoding(self, name: str, encoding: np.ndarray):
+        self.known_faces.setdefault(name, []).append(encoding)
+
+    def reload_person(self, name: str, person_dir: Path):
+        """Blocking: re-encode every image of one person (after deletions)."""
+        encodings = []
+        if person_dir.is_dir():
+            for image_path in sorted(person_dir.iterdir()):
+                if image_path.suffix.lower() in (".jpg", ".jpeg", ".png"):
+                    encoding = self._encode_face(str(image_path))
+                    if encoding is not None:
+                        encodings.append(encoding)
+        if encodings:
+            self.known_faces[name] = encodings
+        else:
+            self.known_faces.pop(name, None)
+
+    def remove_person(self, name: str):
+        self.known_faces.pop(name, None)
+
+    def rename_person(self, old: str, new: str):
+        if old in self.known_faces:
+            self.known_faces[new] = self.known_faces.pop(old)
+
     async def identify(self, frame: np.ndarray) -> Dict[str, List]:
         """Identify faces in frame."""
         try:
             # Get face locations and encodings off the event loop (these calls
             # are CPU-heavy and would otherwise block all other coroutines).
+            # Camera frames are BGR; known faces were encoded from RGB files,
+            # so convert or matches are computed on swapped colour channels.
+            frame = self.to_rgb(frame)
             face_locations = await self._async_face_locations(frame)
             face_encodings = await self._async_face_encodings(frame, face_locations)
 
@@ -175,7 +218,9 @@ class FaceRecognizer:
             best_match = None
             best_confidence = 0.0
             
-            for name, known_encodings in self.known_faces.items():
+            for name, known_encodings in list(self.known_faces.items()):
+                if not known_encodings:
+                    continue
                 # Calculate distances to all known encodings for this person
                 distances = face_recognition.face_distance(known_encodings, face_encoding)
                 

@@ -30,6 +30,15 @@
         "frame_skip": 2,
         "detect_objects": true,
         "detect_faces": true,
+        "known_faces_dir": "data/known_faces",
+        "face_recognition_threshold": 0.6,
+        "face_library": {
+            "attempts_dir": "data/face_attempts",
+            "save_attempts": 50,
+            "attempt_interval": 5.0,
+            "enroll_samples": 5,
+            "enroll_timeout": 10.0
+        },
         "detect_gestures": true,
         "object_confidence": 0.25,
         "iou_threshold": 0.45,
@@ -87,6 +96,35 @@
             "enabled": true,
             "max_size_mb": 512,
             "ttl_minutes": 60
+        }
+    },
+    "conversation": {
+        "enabled": true,
+        "assistant_name": "Jarvis",
+        "owner_name": "Viny",
+        "language": "fr",
+        "wake_word": "jarvis",
+        "require_wake_word": true,
+        "history_size": 6,
+        "cache_size": 200,
+        "speech_cooldown": 1.0,
+        "llm": {
+            "base_url": "http://localhost:11434",
+            "model": "qwen2.5:3b",
+            "vision_model": "llava:7b",
+            "temperature": 0.7,
+            "max_tokens": 200,
+            "timeout": 60,
+            "auto_pull": false
+        },
+        "web_search": {
+            "enabled": true,
+            "provider": "auto",
+            "max_results": 3,
+            "fetch_content": false,
+            "timeout": 10,
+            "region": "fr-fr",
+            "time_limit": "m"
         }
     },
     "automation": {
